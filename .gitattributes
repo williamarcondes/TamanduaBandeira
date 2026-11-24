@@ -1,0 +1,10 @@
+* text=auto eol=crlf
+*.sh text eol=lf
+*.png binary -eol
+*.jpg binary -eol
+*.jpeg binary -eol
+*.bmp binary -eol
+*.wav binary -eol
+*.nro binary -eol
+*.elf binary -eol
+*.nacp binary -eol

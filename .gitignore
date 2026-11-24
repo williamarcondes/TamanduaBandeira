@@ -1,0 +1,26 @@
+# Build and distribution output
+/build/
+/dist/
+/cmake-build-*/
+/out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+build.ninja
+.ninja_deps
+.ninja_log
+compile_commands.json
+
+# Nintendo Switch build products
+*.nro
+*.nacp
+*.elf
+*.pfs0
+*.nsp
+
+# Temporary/editor/system files
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
