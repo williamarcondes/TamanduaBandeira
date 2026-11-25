@@ -39,6 +39,7 @@ struct Platform {
     bool spring = false;
 };
 struct Ground { float x0; float x1; };
+struct Hazard { float x0; float x1; };
 enum class EnemyKind { Brute, Gremlin, Ant, DigitalBug };
 struct Enemy {
     float x;
@@ -70,10 +71,30 @@ struct Angel {
 struct Heart { float x = 0.0F; float y = 0.0F; bool found = false; };
 struct Boss {
     float x = 0.0F;
+    float min_x = 0.0F;
+    float max_x = world_w;
+    float speed = 70.0F;
+    float direction = -1.0F;
     int parts = 3;
     float hit_lock = 0.0F;
     float flash = 0.0F;
+    float attack_timer = 2.8F;
+    float attack_animation = 0.0F;
     bool active = false;
+    bool defeated = false;
+};
+struct CornProjectile {
+    float x = 0.0F;
+    float y = 0.0F;
+    float vx = 0.0F;
+    float vy = 0.0F;
+    int kind = 0;
+    bool alive = true;
+};
+struct HitEffect {
+    float x = 0.0F;
+    float y = 0.0F;
+    float timer = 0.0F;
     bool defeated = false;
 };
 struct Player {
@@ -138,16 +159,34 @@ void rect(SDL_Renderer* r, float x, float y, float w, float h, Uint8 red, Uint8 
     SDL_RenderFillRect(r, &box);
 }
 void text(SDL_Renderer* r, const std::string& value, int x, int y, int scale, Uint8 red, Uint8 green, Uint8 blue) {
-    int cursor = x;
-    for (char raw : value) {
-        const char c = raw >= 'a' && raw <= 'z' ? static_cast<char>(raw - 'a' + 'A') : raw;
-        const auto rows = glyph(c);
-        for (int row = 0; row < 7; ++row) for (int col = 0; col < 5; ++col) {
-            if ((rows[static_cast<std::size_t>(row)] & (1U << (4 - col))) != 0U)
-                rect(r, static_cast<float>(cursor + col * scale), static_cast<float>(y + row * scale),
-                     static_cast<float>(scale), static_cast<float>(scale), red, green, blue);
+    int cursor=x;
+    for (std::size_t i=0;i<value.size();++i) {
+        const auto byte=static_cast<unsigned char>(value[i]);
+        char c=static_cast<char>(byte);
+        bool tilde=false;
+        if (byte==0xC3U && i+1<value.size()) {
+            const auto accent=static_cast<unsigned char>(value[i+1]);
+            if (accent==0x83U || accent==0xA3U) { c='A'; tilde=true; ++i; }
+            else if (accent==0x95U || accent==0xB5U) { c='O'; tilde=true; ++i; }
+            else if (accent==0x89U || accent==0xA9U) { c='E'; ++i; }
+            else if (accent==0x81U || accent==0xA1U) { c='A'; ++i; }
+            else if (accent==0x93U || accent==0xB3U) { c='O'; ++i; }
+            else if (accent==0x87U || accent==0xA7U) { c='C'; ++i; }
         }
-        cursor += (c == ' ' ? 4 : 6) * scale;
+        if (c>='a' && c<='z') c=static_cast<char>(c-'a'+'A');
+        const auto rows=glyph(c);
+        for (int row=0;row<7;++row) for (int col=0;col<5;++col) {
+            if ((rows[static_cast<std::size_t>(row)] & (1U << (4-col))) != 0U)
+                rect(r,static_cast<float>(cursor+col*scale),static_cast<float>(y+row*scale),
+                     static_cast<float>(scale),static_cast<float>(scale),red,green,blue);
+        }
+        if (tilde) {
+            rect(r,static_cast<float>(cursor+scale),static_cast<float>(y-2*scale),static_cast<float>(scale),static_cast<float>(scale),red,green,blue);
+            rect(r,static_cast<float>(cursor+2*scale),static_cast<float>(y-3*scale),static_cast<float>(scale),static_cast<float>(scale),red,green,blue);
+            rect(r,static_cast<float>(cursor+3*scale),static_cast<float>(y-3*scale),static_cast<float>(scale),static_cast<float>(scale),red,green,blue);
+            rect(r,static_cast<float>(cursor+4*scale),static_cast<float>(y-2*scale),static_cast<float>(scale),static_cast<float>(scale),red,green,blue);
+        }
+        cursor+=(c==' '?4:6)*scale;
     }
 }
 Texture load_texture(SDL_Renderer* r, const std::string& path, bool keyed, bool smooth = false) {
@@ -169,6 +208,11 @@ void draw_texture(SDL_Renderer* r, const Texture& t, float x, float y, float w, 
     if (!t.texture) return;
     const SDL_FRect dst{x, y, w, h};
     SDL_RenderTextureRotated(r, t.texture, nullptr, &dst, 0.0, nullptr, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+}
+void draw_texture_rotated(SDL_Renderer* r, const Texture& t, float x, float y, float w, float h, double angle) {
+    if (!t.texture) return;
+    const SDL_FRect dst{x, y, w, h};
+    SDL_RenderTextureRotated(r, t.texture, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
 }
 std::string asset(const char* file) {
 #ifdef __SWITCH__
@@ -241,14 +285,8 @@ void bean_sprite(SDL_Renderer* r, float x, float y, float scale = 1.45F) {
     bean_rect(14,21,2,2,87,40,28);
     bean_rect(7,11,3,3,204,125,68); bean_rect(7,15,3,2,164,87,47);
 }
-void heart_sprite(SDL_Renderer* r, float x, float y) {
-    rect(r,x+4,y,7,5,235,68,89);
-    rect(r,x+16,y,7,5,235,68,89);
-    rect(r,x+1,y+4,25,8,213,48,73);
-    rect(r,x+4,y+12,19,5,190,38,64);
-    rect(r,x+8,y+17,11,5,167,31,56);
-    rect(r,x+11,y+22,5,4,143,25,47);
-    rect(r,x+6,y+3,5,3,255,166,160);
+void heart_sprite(SDL_Renderer* r, const Texture& heart, float x, float y, float size) {
+    draw_texture(r,heart,x,y,size,size);
 }
 float item_y(const Bean& b) {
     return b.y - (b.popping ? std::sin(b.pop_time * pi) * 58.0F : 0.0F);
@@ -295,15 +333,47 @@ void dig_mark(SDL_Renderer* r, float x, float y, bool dug, int stage) {
         rect(r,x-4,y-17,8,3,123,238,222);
     }
 }
-void coffee_bottle(SDL_Renderer* r, float x, float base, float scale = 1.0F) {
-    rect(r, x + 7*scale, base - 9*scale, 40*scale, 8*scale, 61, 39, 25);
-    rect(r, x + 13*scale, base - 91*scale, 28*scale, 12*scale, 116, 55, 32);
-    rect(r, x + 17*scale, base - 103*scale, 20*scale, 14*scale, 181, 70, 45);
-    rect(r, x + 6*scale, base - 81*scale, 42*scale, 73*scale, 93, 49, 31);
-    rect(r, x + 10*scale, base - 76*scale, 7*scale, 54*scale, 146, 82, 42);
-    rect(r, x + 10*scale, base - 58*scale, 34*scale, 29*scale, 227, 195, 126);
-    text(r, "CAFE", static_cast<int>(x + 14*scale), static_cast<int>(base - 49*scale),
-         std::max(1, static_cast<int>(scale)), 95, 54, 31);
+void coffee_bottle(SDL_Renderer* r, const Texture& bottle, float x, float base, float scale = 1.0F, double angle = 0.0) {
+    const float h=132.0F*scale;
+    const float w=bottle.h>0?h*static_cast<float>(bottle.w)/static_cast<float>(bottle.h):88.0F*scale;
+    if (angle==0.0) draw_texture(r,bottle,x,base-h,w,h);
+    else draw_texture_rotated(r,bottle,x,base-h,w,h,angle);
+}
+void stroke(SDL_Renderer* r, float x0, float y0, float x1, float y1, float width,
+            Uint8 red, Uint8 green, Uint8 blue, Uint8 alpha = 255) {
+    const float dx=x1-x0, dy=y1-y0;
+    const float length=std::max(1.0F,std::sqrt(dx*dx+dy*dy));
+    const float nx=-dy/length, ny=dx/length;
+    color(r,red,green,blue,alpha);
+    for (float offset=-width*.5F; offset<=width*.5F; offset+=1.0F)
+        SDL_RenderLine(r,x0+nx*offset,y0+ny*offset,x1+nx*offset,y1+ny*offset);
+}
+void coffee_drink_pose(SDL_Renderer* r, const Texture& sprite,
+                       float x, float y, float w, float h, float time) {
+    const float bob=std::sin(time*3.0F)*2.0F;
+    const float scale=sprite.w>0 && sprite.h>0
+        ?std::min(w/static_cast<float>(sprite.w),h/static_cast<float>(sprite.h)):1.0F;
+    const float draw_w=static_cast<float>(sprite.w)*scale;
+    const float draw_h=static_cast<float>(sprite.h)*scale;
+    const double tilt=std::sin(time*1.7F)*1.2;
+    draw_texture_rotated(r,sprite,x+(w-draw_w)*.5F,y+bob+(h-draw_h)*.5F,draw_w,draw_h,tilt);
+}
+void celebration_fireworks(SDL_Renderer* r, float time) {
+    constexpr std::array<std::array<Uint8,3>,4> colors{{{{255,218,112}},{{255,130,96}},{{132,229,194}},{{166,190,255}}}};
+    constexpr std::array<std::array<float,2>,4> centers{{{{170,190}},{{1090,205}},{{350,470}},{{955,450}}}};
+    for (std::size_t burst=0; burst<centers.size(); ++burst) {
+        const float phase=std::fmod(time*0.72F+static_cast<float>(burst)*0.23F,1.0F);
+        const float radius=12.0F+phase*78.0F;
+        const Uint8 alpha=static_cast<Uint8>((1.0F-phase)*245.0F);
+        for (int ray=0; ray<12; ++ray) {
+            const float angle=static_cast<float>(ray)*pi/6.0F;
+            const float x=centers[burst][0]+std::cos(angle)*radius;
+            const float y=centers[burst][1]+std::sin(angle)*radius;
+            const auto& tint=colors[burst];
+            rect(r,x,y,6,6,tint[0],tint[1],tint[2],alpha);
+            rect(r,x+std::cos(angle)*8.0F,y+std::sin(angle)*8.0F,3,3,255,247,202,alpha);
+        }
+    }
 }
 void guardian(SDL_Renderer* r, const Texture& hero, float x, float y, float w, float h, float phase) {
     const float flap = std::sin(phase * 12.0F) * 7.0F;
@@ -346,95 +416,7 @@ float queen_spring_offset(float phase) {
     return 10.0F + std::abs(std::sin(phase * 3.4F)) * 18.0F;
 }
 float boss_top_y(int stage, float base, float phase) {
-    return base - 112.0F - (stage == 0 ? queen_spring_offset(phase) : 0.0F);
-}
-void boss_sprite(SDL_Renderer* r, int stage, float x, float base, int parts, float phase, bool flash) {
-    rect(r,x+18,base-5,158,5,8,18,28,145);
-    if(stage==0) {
-        const float bob=queen_spring_offset(phase);
-        const float head_y=base-110.0F-bob;
-        // Six articulated legs, wide abdomen and segmented thorax make the queen read as an ant.
-        rect(r,x+50,base-35,8,25,57,28,25); rect(r,x+35,base-13,24,5,82,39,27);
-        rect(r,x+91,base-35,8,28,57,28,25); rect(r,x+80,base-11,24,5,82,39,27);
-        rect(r,x+144,base-36,8,25,57,28,25); rect(r,x+143,base-14,24,5,82,39,27);
-        rect(r,x+62,base-55,65,33,75,28,25);
-        rect(r,x+29,base-53,63,38,111,42,31);
-        rect(r,x+34,base-49,52,29,151,57,38);
-        rect(r,x+40,base-46,39,4,185,80,49);
-        rect(r,x+42,base-40,37,3,96,35,28);
-        rect(r,x+49,base-34,27,3,96,35,28);
-        rect(r,x+82,base-54,40,23,133,49,33);
-        rect(r,x+88,base-51,27,17,181,72,42);
-        // A visible spring neck flexes below the head.
-        const float coil_top=head_y+35.0F;
-        const float coil_height=std::max(8.0F,base-60.0F-coil_top);
-        rect(r,x+98,coil_top,4,coil_height,78,35,27);
-        rect(r,x+122,coil_top,4,coil_height,78,35,27);
-        for(int i=0;i<5;++i) {
-            const float t=static_cast<float>(i)/4.0F;
-            const float cy=coil_top+t*coil_height;
-            rect(r,x+(i%2==0?98.0F:105.0F),cy,28,4,207,112,54);
-            rect(r,x+(i%2==0?101.0F:108.0F),cy+1,18,2,255,177,88);
-        }
-        // Head, compound eyes, mandibles, antennae and a small queen's crown.
-        rect(r,x+87,head_y+6,51,27,75,28,25);
-        rect(r,x+92,head_y+2,42,29,150,55,37);
-        rect(r,x+98,head_y,29,6,191,78,47);
-        rect(r,x+88,head_y+17,51,12,177,64,42);
-        rect(r,x+92,head_y+13,13,12,247,221,164);
-        rect(r,x+119,head_y+13,13,12,247,221,164);
-        rect(r,x+97,head_y+15,7,8,44,25,22); rect(r,x+124,head_y+15,7,8,44,25,22);
-        rect(r,x+99,head_y+16,3,3,255,255,225); rect(r,x+126,head_y+16,3,3,255,255,225);
-        rect(r,x+96,head_y-5,4,9,83,35,28); rect(r,x+95,head_y-9,13,4,115,49,34);
-        rect(r,x+125,head_y-5,4,9,83,35,28); rect(r,x+121,head_y-9,13,4,115,49,34);
-        rect(r,x+103,head_y+27,8,11,82,31,27); rect(r,x+123,head_y+27,8,11,82,31,27);
-        rect(r,x+101,head_y-13,6,5,255,211,108); rect(r,x+113,head_y-17,6,9,255,211,108);
-        rect(r,x+125,head_y-13,6,5,255,211,108);
-        if(parts>0) rect(r,x+33,base-49,16,20,207,91,49);
-        if(parts>1) rect(r,x+53,base-46,17,19,218,112,58);
-        if(parts>2) rect(r,x+73,base-48,14,20,199,77,43);
-    } else if(stage==1) {
-        rect(r,x+34,base-40,36,24,86,83,76);
-        rect(r,x+120,base-40,36,24,86,83,76);
-        rect(r,x+48,base-83,102,66,115,112,99);
-        rect(r,x+66,base-105,66,31,142,138,121);
-        rect(r,x+80,base-96,8,7,255,207,103);
-        rect(r,x+112,base-96,8,7,255,207,103);
-        rect(r,x+91,base-80,22,5,54,52,48);
-        rect(r,x+24,base-47,24,10,75,72,67);
-        rect(r,x+145,base-47,25,10,75,72,67);
-        rect(r,x+18,base-38,10,22,91,87,78);
-        rect(r,x+157,base-38,10,22,91,87,78);
-        if(parts>0) rect(r,x+51,base-68,26,17,174,166,142);
-        if(parts>1) rect(r,x+86,base-68,27,17,184,172,145);
-        if(parts>2) rect(r,x+122,base-68,26,17,174,166,142);
-        rect(r,x+90,base-116,14,13,103,100,89);
-        rect(r,x+79,base-119,36,5,116,114,104);
-    } else {
-        const Uint8 core=flash?255:38, glow=flash?250:221;
-        rect(r,x+35,base-41,111,39,16,38,62);
-        rect(r,x+48,base-83,87,56,19,65,93);
-        rect(r,x+63,base-105,57,31,36,105,137);
-        rect(r,x+70,base-94,9,8,glow,255,227);
-        rect(r,x+104,base-94,9,8,glow,255,227);
-        rect(r,x+84,base-73,31,25,core,glow,255);
-        rect(r,x+89,base-69,21,17,19,32,52);
-        rect(r,x+18,base-57,27,9,47,167,188);
-        rect(r,x+139,base-57,29,9,47,167,188);
-        rect(r,x+23,base-49,9,23,38,111,135);
-        rect(r,x+153,base-49,9,23,38,111,135);
-        if(parts>0) rect(r,x+45,base-75,20,18,117,243,222);
-        if(parts>1) rect(r,x+83,base-82,20,20,154,240,250);
-        if(parts>2) rect(r,x+123,base-75,20,18,117,243,222);
-        const float jitter=std::sin(phase*21.0F)*5.0F;
-        rect(r,x+33+jitter,base-90,12,3,221,110,255);
-        rect(r,x+140-jitter,base-37,14,3,78,231,241);
-    }
-    if(flash) {
-        rect(r,x+75,base-123,37,3,255,252,225);
-        rect(r,x+7,base-72,13,3,255,255,238);
-        rect(r,x+165,base-68,14,3,255,255,238);
-    }
+    return base - 171.0F - (stage == 0 ? queen_spring_offset(phase) * 0.35F : 0.0F);
 }
 } // namespace
 
@@ -487,16 +469,52 @@ int main(int, char**) {
         std::fprintf(stderr, "Audio indisponivel: %s\n", SDL_GetError());
     }
 
+    SDL_AudioSpec impact_spec{};
+    Uint8* impact_data=nullptr;
+    Uint32 impact_length=0;
+    SDL_AudioStream* impact_stream=nullptr;
+    if (SDL_LoadWAV(asset("impacto-golpe.wav").c_str(),&impact_spec,&impact_data,&impact_length)) {
+        impact_stream=SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&impact_spec,nullptr,nullptr);
+        if (!impact_stream || !SDL_ResumeAudioStreamDevice(impact_stream)) {
+            if (impact_stream) SDL_DestroyAudioStream(impact_stream);
+            impact_stream=nullptr;
+            SDL_free(impact_data);
+            impact_data=nullptr;
+            impact_length=0;
+        }
+    } else {
+        std::fprintf(stderr,"Efeito de impacto nao encontrado: %s\n",SDL_GetError());
+    }
+    const auto play_impact=[&]() {
+        if (!impact_stream || !impact_data || impact_length==0) return;
+        SDL_ClearAudioStream(impact_stream);
+        SDL_PutAudioStreamData(impact_stream,impact_data,static_cast<int>(impact_length));
+    };
+
     const std::array<Texture, stage_count> backgrounds{{
         load_texture(renderer, asset("mata.bmp"), false, true),
         load_texture(renderer, asset("cidade.bmp"), false, true),
         load_texture(renderer, asset("escritorio.bmp"), false, true)
     }};
+    const Texture coffee_bottle_texture=load_texture(renderer,asset("cafe-garrafa.bmp"),true);
+    const Texture life_heart_texture=load_texture(renderer,asset("coracao-vida.bmp"),true,true);
+    const Texture victory_sprite=load_texture(renderer,asset("tamandua-bebendo.bmp"),true,true);
     std::array<Texture, 8> hero{};
     std::array<Texture, 4> digging{};
     std::array<Texture, 4> brute{};
     std::array<Texture, 4> gremlin{};
     std::array<Texture, 4> ants{};
+    std::array<std::array<Texture, 4>, stage_count> boss_textures{};
+    const std::array<std::array<const char*, 4>, stage_count> boss_texture_names{{
+        {{"boss_queen_walk1.bmp", "boss_queen_walk2.bmp", "boss_queen_windup.bmp", "boss_queen_attack.bmp"}},
+        {{"boss_guardian_walk1.bmp", "boss_guardian_walk2.bmp", "boss_guardian_windup.bmp", "boss_guardian_attack.bmp"}},
+        {{"boss_digital_walk1.bmp", "boss_digital_walk2.bmp", "boss_digital_windup.bmp", "boss_digital_attack.bmp"}}
+    }};
+    const std::array<Texture, stage_count> corn_textures{{
+        load_texture(renderer, asset("projectile_corn.bmp"), true),
+        load_texture(renderer, asset("projectile_cob.bmp"), true),
+        load_texture(renderer, asset("projectile_popcorn.bmp"), true)
+    }};
     const std::array<const char*, 8> hero_names{"tamandua_idle.bmp","tamandua_run1.bmp","tamandua_run2.bmp","tamandua_jump.bmp",
         "tamandua_crouch.bmp","tamandua_dig.bmp","tamandua_ball.bmp","tamandua_roll.bmp"};
     const std::array<const char*, 4> dig_names{"tamandua_dig_1.bmp","tamandua_dig_2.bmp","tamandua_dig_3.bmp","tamandua_dig_4.bmp"};
@@ -508,15 +526,19 @@ int main(int, char**) {
     for (std::size_t i=0; i<brute.size(); ++i) brute[i]=load_texture(renderer,asset(brute_names[i]),true);
     for (std::size_t i=0; i<gremlin.size(); ++i) gremlin[i]=load_texture(renderer,asset(gremlin_names[i]),true);
     for (std::size_t i=0; i<ants.size(); ++i) ants[i]=load_texture(renderer,asset(ant_names[i]),true);
+    for (std::size_t stage=0; stage<boss_textures.size(); ++stage)
+        for (std::size_t pose=0; pose<boss_textures[stage].size(); ++pose)
+            boss_textures[stage][pose]=load_texture(renderer,asset(boss_texture_names[stage][pose]),true);
 
     int pad_count=0;
     SDL_JoystickID* pad_ids=SDL_GetGamepads(&pad_count);
     SDL_Gamepad* pad=pad_ids && pad_count>0 ? SDL_OpenGamepad(pad_ids[0]) : nullptr;
     SDL_free(pad_ids);
 
-    const std::array<Ground,4> forest_grounds{{{0,1110},{1200,2140},{2230,3160},{3250,world_w}}};
-    const std::array<Ground,4> city_grounds{{{0,830},{950,1850},{1970,2890},{3010,world_w}}};
-    const std::array<Ground,4> office_grounds{{{0,900},{1020,1900},{2020,2920},{3040,world_w}}};
+    const std::array<Ground,4> forest_grounds{{{0,1110},{1200,world_w},{world_w,world_w},{world_w,world_w}}};
+    const std::array<Ground,4> city_grounds{{{0,830},{950,1090},{1620,1850},{1970,world_w}}};
+    const std::array<Ground,4> office_grounds{{{0,900},{1020,1900},{2020,world_w},{world_w,world_w}}};
+    const std::array<Hazard,stage_count> traversal_hazards{{{1450,1980},{1090,1620},{1135,1645}}};
     std::array<Ground,4> grounds=forest_grounds;
     const std::array<Platform,8> forest_platforms{{{370,510,210},{780,430,205},{1430,510,205},{1800,442,220},
         {2520,500,220},{2870,425,230},{3620,500,205},{4050,510,170}}};
@@ -528,43 +550,45 @@ int main(int, char**) {
     const std::array<Enemy,11> forest_enemies{{
         {310,250,350,118,1,EnemyKind::Ant},{530,495,685,66,2,EnemyKind::Brute},
         {750,690,800,132,1,EnemyKind::Ant},{960,915,1080,90,1,EnemyKind::Gremlin},
-        {1570,1490,1715,72,2,EnemyKind::Brute},{1835,1760,1900,126,1,EnemyKind::Ant},
-        {1985,1900,2090,100,1,EnemyKind::Gremlin},{2650,2550,2790,76,2,EnemyKind::Brute},
+        {1280,1220,1370,72,2,EnemyKind::Brute},{2040,1990,2125,126,1,EnemyKind::Ant},
+        {2320,2250,2400,100,1,EnemyKind::Gremlin},{2650,2550,2790,76,2,EnemyKind::Brute},
         {3010,2920,3100,136,1,EnemyKind::Ant},{3480,3390,3570,105,1,EnemyKind::Gremlin},
         {3740,3650,3820,142,1,EnemyKind::Ant}}};
     const std::array<Enemy,11> city_enemies{{
         {330,275,400,108,1,EnemyKind::Ant},{625,545,730,94,1,EnemyKind::Gremlin},
-        {1080,1000,1165,126,1,EnemyKind::Ant},{1395,1320,1470,92,1,EnemyKind::Gremlin},
-        {1710,1635,1815,72,2,EnemyKind::Brute},{2075,2010,2170,122,1,EnemyKind::Ant},
+        {760,735,820,126,1,EnemyKind::Ant},{1750,1665,1820,92,1,EnemyKind::Gremlin},
+        {2020,1980,2110,72,2,EnemyKind::Brute},{2300,2240,2370,122,1,EnemyKind::Ant},
         {2350,2275,2430,101,1,EnemyKind::Gremlin},{2770,2690,2855,132,1,EnemyKind::Ant},
         {3200,3120,3280,75,2,EnemyKind::Brute},{3500,3430,3590,108,1,EnemyKind::Gremlin},
         {3860,3770,3950,138,1,EnemyKind::Ant}}};
     const std::array<Enemy,11> office_enemies{{
         {300,250,390,118,1,EnemyKind::DigitalBug},{600,530,735,128,1,EnemyKind::DigitalBug},
-        {1100,1035,1190,112,1,EnemyKind::DigitalBug},{1375,1300,1465,106,1,EnemyKind::DigitalBug},
+        {1050,1020,1070,112,1,EnemyKind::DigitalBug},{2050,2020,2130,106,1,EnemyKind::DigitalBug},
         {1740,1660,1840,94,1,EnemyKind::DigitalBug},{2110,2040,2195,122,1,EnemyKind::DigitalBug},
         {2430,2350,2525,118,1,EnemyKind::DigitalBug},{2780,2700,2870,132,1,EnemyKind::DigitalBug},
         {3190,3110,3290,100,1,EnemyKind::DigitalBug},{3480,3410,3590,121,1,EnemyKind::DigitalBug},
         {3830,3750,3950,140,1,EnemyKind::DigitalBug}}};
     std::array<Enemy,11> enemies=forest_enemies;
-    const std::array<float,visible_beans_per_stage> forest_bean_x{{180,450,850,1035,1350,1760,2380,3010}};
-    const std::array<float,visible_beans_per_stage> city_bean_x{{180,420,735,1085,1370,1690,2240,3170}};
-    const std::array<float,visible_beans_per_stage> office_bean_x{{180,470,790,1130,1450,1780,2240,3200}};
-    const std::array<float,hidden_beans_per_stage> forest_cache_x{{690,1690,2450,3500}};
-    const std::array<float,hidden_beans_per_stage> city_cache_x{{690,1510,2500,3510}};
-    const std::array<float,hidden_beans_per_stage> office_cache_x{{710,1570,2500,3550}};
-    std::array<Cache,4> caches{{{690,8,false},{1690,9,false},{2450,10,false},{3500,11,false}}};
+    const std::array<float,visible_beans_per_stage> forest_bean_x{{180,450,850,1035,1350,2200,2380,3010}};
+    const std::array<float,visible_beans_per_stage> city_bean_x{{180,420,735,2010,1775,1690,2240,3170}};
+    const std::array<float,visible_beans_per_stage> office_bean_x{{180,470,790,1050,1810,1880,2240,3200}};
+    const std::array<float,hidden_beans_per_stage> forest_cache_x{{690,2250,2530,3500}};
+    const std::array<float,hidden_beans_per_stage> city_cache_x{{690,1800,2500,3510}};
+    const std::array<float,hidden_beans_per_stage> office_cache_x{{710,2070,2500,3550}};
+    std::array<Cache,4> caches{{{690,8,false},{2250,9,false},{2530,10,false},{3500,11,false}}};
     std::array<Bean,beans_per_stage> beans{{
         {180,ground_y-34},{450,ground_y-37},{850,ground_y-34},{1035,ground_y-34},
-        {1350,ground_y-34},{1760,ground_y-34},{2380,ground_y-34},{3010,ground_y-34},
-        {690,ground_y-36,false,false,false,0},{1690,ground_y-36,false,false,false,0},
+        {1350,ground_y-34},{2200,ground_y-34},{2380,ground_y-34},{3010,ground_y-34},
+        {690,ground_y-36,false,false,false,0},{2250,ground_y-36,false,false,false,0},
         {2450,ground_y-36,false,false,false,0},{3500,ground_y-36,false,false,false,0}}};
 
     Player player;
     Angel angel;
     Heart heart;
     Boss boss;
+    std::vector<CornProjectile> corn_projectiles;
     bool game_over=false;
+    std::vector<HitEffect> hit_effects;
     bool bottle_collected=false;
     bool celebrating=false;
     float celebration_timer=0.0F;
@@ -605,7 +629,14 @@ int main(int, char**) {
         player.grounded=true; player.crouched=false; player.rolling=false; player.jump_attack_armed=false; player.digging=0.0F;
         angel.active=false;
         bottle_collected=false; celebrating=false; celebration_timer=0.0F;
-        boss.x=world_w-430.0F; boss.parts=3; boss.hit_lock=0.0F; boss.flash=0.0F;
+        boss.x=world_w-430.0F;
+        boss.min_x=world_w-1580.0F;
+        boss.max_x=world_w-300.0F;
+        boss.speed=65.0F+static_cast<float>(current_stage)*12.0F;
+        boss.direction=-1.0F;
+        boss.parts=3; boss.hit_lock=0.0F; boss.flash=0.0F;
+        boss.attack_timer=3.0F; boss.attack_animation=0.0F; corn_projectiles.clear();
+        hit_effects.clear();
         boss.active=false; boss.defeated=false;
         heart.x=heart_positions[static_cast<std::size_t>(current_stage)];
         heart.y=ground_y-28.0F; heart.found=false;
@@ -631,30 +662,33 @@ int main(int, char**) {
     };
     reset_stage();
     const auto respawn_near_death=[&]() {
+        const Hazard& hazard=traversal_hazards[static_cast<std::size_t>(current_stage)];
         float best_score=1.0e9F;
         float safe_x=72.0F;
-        float safe_y=ground_y-114.0F;
         for (const auto& ground:grounds) {
             const float min_x=ground.x0+8.0F;
-            const float max_x=ground.x1-65.0F;
-            if (max_x<min_x) continue;
-            const float candidate_x=std::clamp(angel.respawn_x,min_x,max_x);
-            const float candidate_y=ground_y-114.0F;
-            const float score=std::abs(candidate_x-angel.respawn_x)+
-                std::abs(candidate_y-angel.respawn_y)*0.8F;
-            if (score<best_score) { best_score=score; safe_x=candidate_x; safe_y=candidate_y; }
+            const float max_x=ground.x1-66.0F;
+            if (max_x<min_x || ground.x1-ground.x0<80.0F) continue;
+            const std::array<float,3> candidates{{
+                std::clamp(angel.respawn_x,min_x,max_x),
+                std::clamp(hazard.x0-76.0F,min_x,max_x),
+                std::clamp(hazard.x1+10.0F,min_x,max_x)
+            }};
+            for (float candidate:candidates) {
+                if (candidate+58.0F>hazard.x0 && candidate+2.0F<hazard.x1) continue;
+                float score=std::abs(candidate-angel.respawn_x);
+                for (const auto& foe:enemies) if (foe.alive &&
+                    std::abs(candidate+30.0F-(foe.x+27.0F))<105.0F) score+=420.0F;
+                if (boss.active && !boss.defeated &&
+                    std::abs(candidate+30.0F-(boss.x+140.0F))<170.0F) score+=500.0F;
+                if (score<best_score) { best_score=score; safe_x=candidate; }
+            }
         }
-        for (const auto& platform:platforms) {
-            const float platform_y=platform.y-114.0F;
-            if (std::abs(platform_y-angel.respawn_y)>90.0F ||
-                angel.respawn_x+52.0F<platform.x || angel.respawn_x+8.0F>platform.x+platform.w) continue;
-            const float candidate_x=std::clamp(angel.respawn_x,platform.x-42.0F,platform.x+platform.w-10.0F);
-            const float score=std::abs(candidate_x-angel.respawn_x)+std::abs(platform_y-angel.respawn_y)*0.8F;
-            if (score<best_score) { best_score=score; safe_x=candidate_x; safe_y=platform_y; }
-        }
-        player.x=safe_x; player.y=safe_y; player.vx=0.0F; player.vy=0.0F;
+        player.x=safe_x;
+        player.y=ground_y-114.0F;
+        player.vx=0.0F; player.vy=0.0F;
         player.grounded=true; player.crouched=false; player.rolling=false;
-        player.coyote_timer=0.18F; player.respawn_invulnerable=2.0F;
+        player.coyote_timer=0.18F; player.respawn_invulnerable=2.8F;
     };
     const auto start_death=[&]() {
         if (angel.active || game_over || player.finished) return;
@@ -682,6 +716,11 @@ int main(int, char**) {
         const float dt=std::min(0.04F,static_cast<float>(now-previous)/1000.0F);
         previous=now;
         elapsed+=dt;
+        if (!paused && !title_screen) {
+            for (auto& fx:hit_effects) fx.timer+=dt;
+            hit_effects.erase(std::remove_if(hit_effects.begin(),hit_effects.end(),
+                [](const HitEffect& fx){return fx.timer>0.86F;}),hit_effects.end());
+        }
         if (!paused && !title_screen) stage_banner_timer=std::max(0.0F,stage_banner_timer-dt);
         if (!paused && !title_screen && !angel.active)
             player.respawn_invulnerable=std::max(0.0F,player.respawn_invulnerable-dt);
@@ -712,7 +751,7 @@ int main(int, char**) {
             text(renderer,"TAMANDUA BANDEIRA",394,100,4,255,246,218);
             text(renderer,"UMA AVENTURA PELO SUL DE MINAS",392,151,2,177,226,208);
             draw_texture(renderer,hero[0],282,214,230,282);
-            coffee_bottle(renderer,889,505,1.05F);
+            coffee_bottle(renderer,coffee_bottle_texture,889,505,1.05F);
             bean_sprite(renderer,840,337);
             bean_sprite(renderer,1000,301);
             panel(renderer,552,218,422,89);
@@ -754,7 +793,7 @@ int main(int, char**) {
         }
         if (!paused && celebrating) {
             celebration_timer+=dt;
-            if (celebration_timer>=1.55F) {
+            if (celebration_timer>=2.8F) {
                 celebrating=false;
                 if (current_stage<stage_count-1) {
                     ++current_stage;
@@ -820,9 +859,11 @@ int main(int, char**) {
             player.y+=player.vy*dt;
             player.grounded=false;
             const float new_bottom=player.y+h;
+            const Hazard& hazard=traversal_hazards[static_cast<std::size_t>(current_stage)];
+            const bool over_river=current_stage==1 && player.x+50.0F>hazard.x0 && player.x+10.0F<hazard.x1;
             bool boss_top_contact=false;
             if (player.vy>=0) {
-                for (const auto& ground:grounds) if (player.x+50>ground.x0 && player.x+10<ground.x1 &&
+                for (const auto& ground:grounds) if (!over_river && player.x+50>ground.x0 && player.x+10<ground.x1 &&
                     old_bottom<=ground_y+5 && new_bottom>=ground_y) {
                     player.y=ground_y-h; player.vy=0; player.grounded=true;
                 }
@@ -836,8 +877,9 @@ int main(int, char**) {
                     }
                     break;
                 }
-                if (boss.active && !boss.defeated) {
-                    constexpr float boss_w=180.0F;
+
+        if (boss.active && !boss.defeated) {
+                    constexpr float boss_w=280.0F;
                     const float boss_top=boss_top_y(current_stage,ground_y,elapsed);
                     if (player.x+58>boss.x && player.x+2<boss.x+boss_w &&
                         old_bottom<=boss_top+4.0F && new_bottom>=boss_top) {
@@ -849,6 +891,9 @@ int main(int, char**) {
             if (player.y>screen_h+80) {
                 start_death();
             }
+            if (current_stage!=1 && player.respawn_invulnerable<=0.0F && player.grounded &&
+                player.y+h>=ground_y-2.0F && player.x+58.0F>hazard.x0 && player.x+2.0F<hazard.x1)
+                start_death();
 
             if (!angel.active) {
                 for (auto& bean:beans) {
@@ -874,6 +919,42 @@ int main(int, char**) {
                 }
                 boss.hit_lock=std::max(0.0F,boss.hit_lock-dt);
                 boss.flash=std::max(0.0F,boss.flash-dt);
+                if (boss.active && !boss.defeated) {
+                    const float boss_center=boss.x+125.0F;
+                    const float player_center=player.x+30.0F;
+                    const float distance=player_center-boss_center;
+                    if (std::abs(distance)>72.0F) boss.direction=distance>0.0F?1.0F:-1.0F;
+                    else boss.direction=std::sin(elapsed*0.8F)>=0.0F?1.0F:-1.0F;
+                    boss.x+=boss.direction*boss.speed*dt;
+                    if (boss.x<boss.min_x) { boss.x=boss.min_x; boss.direction=1.0F; }
+                    if (boss.x>boss.max_x) { boss.x=boss.max_x; boss.direction=-1.0F; }
+                    boss.attack_timer-=dt;
+                    boss.attack_animation=std::max(0.0F,boss.attack_animation-dt);
+                    if (boss.attack_timer<=0.0F) {
+                        const bool player_left=player_center<boss.x+125.0F;
+                        const float muzzle_x=boss.x+(player_left?18.0F:232.0F);
+                        const float predicted_x=player_center+std::clamp(player.vx*0.38F,-110.0F,110.0F);
+                        const float vx=std::clamp((predicted_x-muzzle_x)*1.18F,-420.0F,420.0F);
+                        corn_projectiles.push_back({muzzle_x,ground_y-58.0F,vx,-112.0F,current_stage,true});
+                        boss.attack_timer=4.6F;
+                        boss.attack_animation=0.48F;
+                    }
+                }
+                for (auto& shot:corn_projectiles) {
+                    if (!shot.alive) continue;
+                    shot.x+=shot.vx*dt;
+                    shot.y+=shot.vy*dt;
+                    shot.vy+=390.0F*dt;
+                    const float size=shot.kind==1?36.0F:28.0F;
+                    if (shot.x<0.0F || shot.x>world_w || shot.y>ground_y-8.0F) shot.alive=false;
+                    if (shot.alive && !angel.active && player.respawn_invulnerable<=0.0F &&
+                        overlaps(player.x+14.0F,player.y+18.0F,34.0F,h-20.0F,shot.x,shot.y,size,size)) {
+                        shot.alive=false;
+                        start_death();
+                    }
+                }
+                corn_projectiles.erase(std::remove_if(corn_projectiles.begin(),corn_projectiles.end(),
+                    [](const CornProjectile& shot){return !shot.alive;}),corn_projectiles.end());
                 if (calm_start_timer<=0.0F) for (auto& foe:enemies) {
                     if (!foe.alive) continue;
                     foe.x+=(foe.right?foe.speed:-foe.speed)*dt;
@@ -893,7 +974,11 @@ int main(int, char**) {
                         foe.x+5.0F,ey+4.0F,ew-10.0F,eh-5.0F);
                     if (stomp || (player.rolling && body_contact) || body_contact) {
                         if (player.rolling || stomp) {
-                            --foe.hp; if (foe.hp<=0) foe.alive=false;
+                            --foe.hp;
+                            const bool defeated=foe.hp<=0;
+                            if (defeated) foe.alive=false;
+                            hit_effects.push_back({foe.x+ew*.5F,ey+eh*.48F,0.0F,defeated});
+                            play_impact();
                             if (stomp) player.jump_attack_armed=false;
                             player.vy=stomp?-510.0F:-360.0F; player.grounded=false;
                             if (stomp) break;
@@ -905,11 +990,13 @@ int main(int, char**) {
                 }
 
                 if (!angel.active && boss.active && !boss.defeated) {
-                    constexpr float boss_w=180.0F;
+                    constexpr float boss_w=280.0F;
                     const float boss_top=boss_top_y(current_stage,ground_y,elapsed);
                     const float boss_h=ground_y-boss_top;
                     if (boss_top_contact && player.jump_attack_armed && boss.hit_lock<=0.0F) {
                         --boss.parts; boss.hit_lock=0.45F; boss.flash=0.24F;
+                        hit_effects.push_back({boss.x+140.0F,boss_top+boss_h*.48F,0.0F,boss.parts<=0});
+                        play_impact();
                         player.jump_attack_armed=current_stage==0;
                         if(current_stage==0) { player.vy=-840.0F; player.grounded=false; }
                         if (boss.parts<=0) boss.defeated=true;
@@ -920,8 +1007,8 @@ int main(int, char**) {
                     }
                 }
                 if (!angel.active && boss.defeated && !bottle_collected && player.grounded) {
-                    const float bottle_x=world_w-200.0F;
-                    if (overlaps(player.x+8.0F,player.y,52.0F,h,bottle_x+4.0F,ground_y-136.0F,67.0F,136.0F)) {
+                    const float bottle_x=world_w-220.0F;
+                    if (overlaps(player.x+8.0F,player.y,52.0F,h,bottle_x+4.0F,ground_y-190.0F,118.0F,190.0F)) {
                         bottle_collected=true; celebrating=true; celebration_timer=0.0F;
                         player.vx=0.0F; player.vy=0.0F;
                     }
@@ -948,6 +1035,70 @@ int main(int, char**) {
             rect(renderer,ground.x0-camera,ground_y,ground.x1-ground.x0,98,soil[stage_color][0],soil[stage_color][1],soil[stage_color][2]);
             rect(renderer,ground.x0-camera,ground_y,ground.x1-ground.x0,13,surface[stage_color][0],surface[stage_color][1],surface[stage_color][2]);
             rect(renderer,ground.x0-camera,ground_y+13,ground.x1-ground.x0,6,highlight[stage_color][0],highlight[stage_color][1],highlight[stage_color][2]);
+        }
+        const Hazard& hazard=traversal_hazards[static_cast<std::size_t>(current_stage)];
+        const float hazard_left=hazard.x0-camera, hazard_width=hazard.x1-hazard.x0;
+        if (current_stage==0) {
+            rect(renderer,hazard_left,ground_y-6.0F,hazard_width,7,67,126,54);
+            for (float hx=hazard.x0;hx<hazard.x1;hx+=26.0F) {
+                const float sx=hx-camera;
+                const float sway=std::sin(elapsed*2.0F+hx*.018F)*2.0F;
+                stroke(renderer,sx+10.0F,ground_y-2.0F,sx+5.0F,ground_y-27.0F+sway,4.0F,76,131,58);
+                stroke(renderer,sx+10.0F,ground_y-9.0F,sx+20.0F,ground_y-30.0F-sway,4.0F,91,151,62);
+                rect(renderer,sx+8.0F,ground_y-20.0F+sway,5.0F,7.0F,115,69,51);
+                rect(renderer,sx+2.0F,ground_y-30.0F+sway,7.0F,5.0F,185,49,70);
+            }
+            for (float hx=hazard.x0+24.0F;hx<hazard.x1;hx+=112.0F) {
+                const float sx=hx-camera+std::sin(elapsed*2.0F+hx*.01F)*2.0F;
+                rect(renderer,sx-10.0F,ground_y-36.0F,10,9,173,43,67);
+                rect(renderer,sx-4.0F,ground_y-41.0F,12,11,219,65,83);
+                rect(renderer,sx+6.0F,ground_y-35.0F,10,9,173,43,67);
+                rect(renderer,sx-1.0F,ground_y-33.0F,8,8,255,166,130);
+                rect(renderer,sx+1.0F,ground_y-32.0F,4,5,255,218,164);
+            }
+        } else if (current_stage==1) {
+            for (float hx=hazard.x0;hx<hazard.x1;hx+=12.0F) {
+                const float fraction=(hx-hazard.x0)/hazard_width;
+                const float edge=std::clamp(std::min(fraction*11.0F,(1.0F-fraction)*11.0F),0.0F,1.0F);
+                const float sx=hx-camera;
+                const float wave=std::sin(elapsed*2.7F+hx*.019F)*2.8F;
+                const float water_y=ground_y-5.0F+(1.0F-edge)*16.0F+wave;
+                const Uint8 blue=static_cast<Uint8>(123.0F+edge*52.0F);
+                const Uint8 green=static_cast<Uint8>(145.0F-edge*40.0F);
+                rect(renderer,sx,water_y,14.0F,static_cast<float>(screen_h)-water_y,19,green,blue);
+                rect(renderer,sx,water_y,14.0F,3.0F,static_cast<Uint8>(87.0F+edge*42.0F),
+                     static_cast<Uint8>(188.0F+edge*35.0F),229,235);
+                if (static_cast<int>(hx/12.0F+elapsed*2.0F)%4==0)
+                    rect(renderer,sx+5.0F,water_y-5.0F,5.0F,2.0F,197,241,237,190);
+            }
+            for (int bubble=0;bubble<5;++bubble) {
+                const float phase=std::fmod(elapsed*26.0F+static_cast<float>(bubble)*31.0F,91.0F);
+                const float bx=hazard_left+std::fmod(static_cast<float>(bubble)*113.0F+elapsed*17.0F,hazard_width-16.0F);
+                rect(renderer,bx,ground_y+86.0F-phase,4.0F,4.0F,151,231,224,130);
+            }
+        } else {
+            for (float hx=hazard.x0;hx<hazard.x1;hx+=14.0F) {
+                const float x0=hx-camera;
+                const float y0=ground_y-3.0F+std::sin(elapsed*5.0F+hx*.024F)*2.5F;
+                const float x1=hx+14.0F-camera;
+                const float y1=ground_y-3.0F+std::sin(elapsed*5.0F+(hx+14.0F)*.024F)*2.5F;
+                stroke(renderer,x0,y0,x1,y1,5.0F,36,69,85);
+                stroke(renderer,x0,y0,x1,y1,2.0F,255,202,80);
+            }
+            for (float hx=hazard.x0+24.0F;hx<hazard.x1;hx+=108.0F) {
+                const float sx=hx-camera;
+                rect(renderer,sx,ground_y-9.0F,8.0F,8.0F,94,125,137);
+                rect(renderer,sx+2.0F,ground_y-7.0F,4.0F,4.0F,255,209,91);
+            }
+            for (int spark=0;spark<6;++spark) {
+                const float phase=elapsed*8.0F+static_cast<float>(spark)*1.7F;
+                if (std::sin(phase)>0.55F) {
+                    const float sx=hazard_left+std::fmod(static_cast<float>(spark)*83.0F+elapsed*35.0F,hazard_width);
+                    const float sy=ground_y-15.0F-std::abs(std::sin(phase))*8.0F;
+                    stroke(renderer,sx-4.0F,sy,sx+4.0F,sy,2.0F,152,250,255);
+                    stroke(renderer,sx,sy-4.0F,sx,sy+4.0F,2.0F,152,250,255);
+                }
+            }
         }
         for (const auto& p:platforms) if (p.travel>0.0F) {
             const float rail_x=p.x-camera;
@@ -996,11 +1147,26 @@ int main(int, char**) {
                 rect(renderer,sx+49,p.y-5,5,8,88,164,121);
             }
         }
-        for (const auto& bean:beans) if (!bean.found && bean.revealed) bean_sprite(renderer,bean.x-camera,item_y(bean));
+        for (const auto& bean:beans) if (!bean.found && bean.revealed) {
+            const float bob=std::sin(elapsed*3.4F+bean.x*.021F)*4.0F;
+            bean_sprite(renderer,bean.x-camera,item_y(bean)+bob);
+            if (std::sin(elapsed*5.0F+bean.x*.03F)>0.82F)
+                rect(renderer,bean.x-camera+13.0F,item_y(bean)+bob-10.0F,4,4,255,230,175);
+        }
         for (const auto& cache:caches) dig_mark(renderer,cache.x-camera,ground_y,cache.dug,current_stage);
-        if (!heart.found) heart_sprite(renderer,heart.x-camera,heart.y);
-        if (boss.defeated && !bottle_collected)
-            coffee_bottle(renderer,world_w-200.0F-camera,ground_y,1.28F);
+        if (!heart.found) {
+            const float pulse=std::sin(elapsed*4.0F)*3.0F;
+            rect(renderer,heart.x-camera-5.0F,heart.y-4.0F,39.0F,37.0F,255,92,103,static_cast<Uint8>(45+std::abs(pulse)*8));
+            heart_sprite(renderer,life_heart_texture,heart.x-camera-5.0F,heart.y-6.0F+pulse,40.0F);
+        }
+        if (boss.defeated && !bottle_collected) {
+            const float bob=std::sin(elapsed*2.8F)*5.0F;
+            coffee_bottle(renderer,coffee_bottle_texture,world_w-220.0F-camera,ground_y+bob,1.42F);
+            if (std::sin(elapsed*6.0F)>0.65F) {
+                rect(renderer,world_w-217.0F-camera,ground_y-190.0F+bob,6,6,255,235,169);
+                rect(renderer,world_w-101.0F-camera,ground_y-156.0F+bob,5,5,255,235,169);
+            }
+        }
 
         for (const auto& foe:enemies) {
             if (calm_start_timer>0.0F) continue;
@@ -1025,14 +1191,63 @@ int main(int, char**) {
             draw_texture(renderer,sprite,foe.x-camera-target_w*.40F,base-target_h,target_w,target_h,flip);
         }
 
+                for (const auto& fx:hit_effects) {
+            const float sx=fx.x-camera;
+            if (fx.timer<0.26F) {
+                const Uint8 alpha=static_cast<Uint8>(255.0F*std::clamp(1.0F-fx.timer/0.26F,0.0F,1.0F));
+                const float spread=8.0F+fx.timer*62.0F;
+                for (int slash=0;slash<3;++slash) {
+                    const float offset=(static_cast<float>(slash)-1.0F)*13.0F;
+                    const float left=sx+offset-spread*.45F;
+                    const float right=sx+offset+spread*.42F;
+                    const float top=fx.y-20.0F-fx.timer*15.0F;
+                    const float bottom=fx.y+18.0F-fx.timer*15.0F;
+                    stroke(renderer,left,top,right,bottom,8.0F,92,22,38,alpha);
+                    stroke(renderer,left,top,right,bottom,4.0F,244,55,72,alpha);
+                    stroke(renderer,left+3.0F,top+2.0F,right-3.0F,bottom-3.0F,1.5F,255,190,158,alpha);
+                }
+            }
+            if (fx.defeated && fx.timer>0.06F && fx.timer<0.82F) {
+                for (int puff=0;puff<4;++puff) {
+                    const float age=std::max(0.0F,fx.timer-static_cast<float>(puff)*0.055F);
+                    if (age<=0.0F) continue;
+                    const float rise=age*54.0F;
+                    const float drift=std::sin(age*7.0F+static_cast<float>(puff))*12.0F;
+                    const float cloud_x=sx+drift+(static_cast<float>(puff)-1.5F)*11.0F;
+                    const float cloud_y=fx.y+10.0F-rise;
+                    const Uint8 alpha=static_cast<Uint8>(170.0F*std::clamp(1.0F-age/0.78F,0.0F,1.0F));
+                    rect(renderer,cloud_x+4.0F,cloud_y,12.0F,6.0F,79,71,77,alpha);
+                    rect(renderer,cloud_x,cloud_y+5.0F,20.0F,9.0F,102,91,94,alpha);
+                    rect(renderer,cloud_x+4.0F,cloud_y+12.0F,14.0F,5.0F,126,109,104,alpha);
+                    rect(renderer,cloud_x+5.0F,cloud_y+3.0F,6.0F,3.0F,174,151,139,static_cast<Uint8>(alpha/2));
+                }
+            }
+        }
+
         if (boss.active && !boss.defeated) {
-            boss_sprite(renderer,current_stage,boss.x-camera,ground_y,boss.parts,elapsed,boss.flash>0.0F);
+            const std::size_t walk_pose=static_cast<std::size_t>(static_cast<int>(elapsed*6.0F)%2);
+            const std::size_t pose=boss.flash>0.0F?3U:boss.attack_timer<0.72F?2U:boss.attack_animation>0.0F?3U:walk_pose;
+            const Texture& boss_texture=boss_textures[static_cast<std::size_t>(current_stage)][pose];
+            const float target_h=174.0F;
+            const float target_w=boss_texture.h>0?target_h*static_cast<float>(boss_texture.w)/static_cast<float>(boss_texture.h):220.0F;
+            const float spring_bob=current_stage==0?queen_spring_offset(elapsed)*0.35F:0.0F;
+            const float sprite_x=boss.x-camera+140.0F-target_w*0.5F;
+            draw_texture(renderer,boss_texture,sprite_x,ground_y-target_h-spring_bob,target_w,target_h,player.x<boss.x+125.0F);
             const float head_top=boss_top_y(current_stage,ground_y,elapsed);
             text(renderer,current_stage==0?"FORMIGA RAINHA":current_stage==1?"GUARDIAO DA PRACA":"BUG SUPREMO",
                  static_cast<int>(boss.x-camera+28.0F),static_cast<int>(head_top-22.0F),1,255,244,210);
             for (int part=0;part<3;++part)
                 rect(renderer,boss.x-camera+63.0F+static_cast<float>(part)*21.0F,head_top-10.0F,16,7,
                      part<boss.parts?255:74,part<boss.parts?202:57,part<boss.parts?102:70);
+        }
+
+        for (const auto& shot:corn_projectiles) {
+            const Texture& projectile=corn_textures[static_cast<std::size_t>(shot.kind)];
+            const float projectile_h=shot.kind==1?38.0F:29.0F;
+            const float projectile_w=projectile.h>0?projectile_h*static_cast<float>(projectile.w)/static_cast<float>(projectile.h):36.0F;
+            const double tumble=std::sin(elapsed*7.0F+shot.x*.018F)*26.0;
+            draw_texture_rotated(renderer,projectile,shot.x-camera-projectile_w*0.5F,
+                                 shot.y-projectile_h*0.5F,projectile_w,projectile_h,tumble);
         }
 
         const float ph=player.digging>0.0F?150.0F:player.crouched?108.0F:player.rolling?100.0F:180.0F;
@@ -1059,12 +1274,12 @@ int main(int, char**) {
         text(renderer,"TAMANDUA BANDEIRA",48,40,3,245,241,218);
         text(renderer,stage_names[static_cast<std::size_t>(current_stage)],51,76,2,185,221,161);
         panel(renderer,976,22,276,106);
-        text(renderer,"GRAOS",999,39,3,248,210,123);
+        text(renderer,"GRÃOS",999,39,3,248,210,123);
         text(renderer,std::to_string(player.beans)+"/"+std::to_string(total_beans),1124,39,3,255,248,221);
         text(renderer,"VIDA",999,76,2,212,230,198);
         for (int i=0;i<player.lives;++i) {
             const float hx=1073.0F+static_cast<float>(i)*30.0F;
-            rect(renderer,hx+4,73,10,8,224,91,69); rect(renderer,hx,78,23,10,224,91,69); rect(renderer,hx+6,88,11,5,224,91,69);
+            heart_sprite(renderer,life_heart_texture,hx,67.0F,27.0F);
         }
         text(renderer,"ROLAR",999,103,2,248,210,123);
         rect(renderer,1072,104,155,11,38,65,60);
@@ -1082,18 +1297,15 @@ int main(int, char**) {
         }
 
         if (game_over || paused || player.finished || celebrating) {
-            rect(renderer,0,0,screen_w,screen_h,5,16,24,178);
+            rect(renderer,0,0,screen_w,screen_h,5,16,24,celebrating?68:player.finished?52:178);
             if (celebrating) {
+                celebration_fireworks(renderer,celebration_timer);
                 panel(renderer,210,164,860,394);
-                draw_texture(renderer,hero[0],356,215,250,290);
-                // A small upturned mouth makes the pickup read as a happy celebration.
-                rect(renderer,559,311,13,3,63,32,25);
-                rect(renderer,572,314,10,3,63,32,25);
-                rect(renderer,582,311,8,3,63,32,25);
+                coffee_drink_pose(renderer,victory_sprite,292,215,280,290,celebration_timer);
                 text(renderer,"BOM TRABALHO!",652,222,3,255,241,213);
                 text(renderer,"CAFE ENCONTRADO!",652,278,3,255,224,151);
                 text(renderer,"UM CAFE EXCELENTE ESPERA POR VOCE",652,333,2,238,245,226);
-                coffee_bottle(renderer,887,497,1.35F);
+                coffee_bottle(renderer,coffee_bottle_texture,887,497,1.52F);
                 rect(renderer,632,415,10,10,255,219,114);
                 rect(renderer,674,447,7,7,151,221,155);
                 rect(renderer,824,431,8,8,255,219,114);
@@ -1104,12 +1316,13 @@ int main(int, char**) {
                 text(renderer,"B RECOMECAR",499,407,3,255,223,138);
             } else if (player.finished) {
                 panel(renderer,190,170,900,380);
-                draw_texture(renderer,hero[0],230,238,200,240);
+                celebration_fireworks(renderer,elapsed+1.8F);
+                const float happy_bob=std::sin(elapsed*4.0F)*4.0F;
+                coffee_drink_pose(renderer,victory_sprite,230,238+happy_bob,250,250,elapsed);
                 text(renderer,"TAMANDUA VENCEU",493,207,3,255,244,210);
                 text(renderer,"3 FASES CONCLUIDAS",493,257,2,186,222,170);
                 text(renderer,"GRAOS: "+std::to_string(player.beans)+"/"+std::to_string(total_beans),493,300,3,255,218,126);
                 text(renderer,"ENCONTROU UM CAFE EXCELENTE!",493,362,2,239,199,111);
-                coffee_bottle(renderer,918,458,0.72F);
                 text(renderer,"B RECOMECAR",529,485,2,255,223,138);
             } else {
                 panel(renderer,205,168,870,384);
@@ -1132,9 +1345,16 @@ int main(int, char**) {
     for (auto& t:brute) if (t.texture) SDL_DestroyTexture(t.texture);
     for (auto& t:gremlin) if (t.texture) SDL_DestroyTexture(t.texture);
     for (auto& t:ants) if (t.texture) SDL_DestroyTexture(t.texture);
+    for (auto& row:boss_textures) for (auto& t:row) if (t.texture) SDL_DestroyTexture(t.texture);
+    for (const auto& t:corn_textures) if (t.texture) SDL_DestroyTexture(t.texture);
+    if (coffee_bottle_texture.texture) SDL_DestroyTexture(coffee_bottle_texture.texture);
+    if (life_heart_texture.texture) SDL_DestroyTexture(life_heart_texture.texture);
+    if (victory_sprite.texture) SDL_DestroyTexture(victory_sprite.texture);
     for (const auto& background:backgrounds) if (background.texture) SDL_DestroyTexture(background.texture);
     if (music_stream) SDL_DestroyAudioStream(music_stream);
     if (music_data) SDL_free(music_data);
+    if (impact_stream) SDL_DestroyAudioStream(impact_stream);
+    if (impact_data) SDL_free(impact_data);
     SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
 #ifdef __SWITCH__
     romfsExit();

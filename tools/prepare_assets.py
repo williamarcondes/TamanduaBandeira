@@ -82,6 +82,46 @@ def pixel_rgba(pixels: bytes, channels: int, width: int, x: int, y: int) -> tupl
     return pixels[i], pixels[i + 1], pixels[i + 2], 255
 
 
+def remove_flat_background(pixels: bytes, channels: int, width: int, height: int) -> bytearray:
+    # Flood-fill the light neutral checkerboard connected to the sheet edges.
+    transparent = bytearray(width * height)
+    queued = bytearray(width * height)
+    queue: deque[int] = deque()
+
+    def is_background(index: int) -> bool:
+        offset = index * channels
+        r, g, b = pixels[offset], pixels[offset + 1], pixels[offset + 2]
+        return min(r, g, b) >= 212 and max(r, g, b) - min(r, g, b) <= 34 and (
+            channels == 3 or pixels[offset + 3] >= 48
+        )
+
+    def enqueue(index: int) -> None:
+        if not queued[index] and is_background(index):
+            queued[index] = 1
+            queue.append(index)
+
+    for x in range(width):
+        enqueue(x)
+        enqueue((height - 1) * width + x)
+    for y in range(height):
+        enqueue(y * width)
+        enqueue(y * width + width - 1)
+
+    while queue:
+        index = queue.popleft()
+        transparent[index] = 1
+        x = index % width
+        if x:
+            enqueue(index - 1)
+        if x + 1 < width:
+            enqueue(index + 1)
+        if index >= width:
+            enqueue(index - width)
+        if index + width < width * height:
+            enqueue(index + width)
+    return transparent
+
+
 def remove_jump_shadow(
     pixels: bytes, channels: int, width: int, cell: tuple[int, int, int, int]
 ) -> bytes:
@@ -145,6 +185,7 @@ def write_bmp(
     pixels: bytes,
     crop: tuple[int, int, int, int] | None = None,
     target_size: tuple[int, int] | None = None,
+    transparent_mask: bytes | bytearray | None = None,
 ) -> None:
     x0, y0, x1, y1 = crop or (0, 0, width, height)
     source_width, source_height = x1 - x0, y1 - y0
@@ -160,7 +201,8 @@ def write_bmp(
         for out_x in range(out_width):
             source_x = x0 + min(source_width - 1, out_x * source_width // out_width)
             r, g, b, a = pixel_rgba(pixels, channels, width, source_x, source_y)
-            if channels == 4 and a < 128:
+            masked = transparent_mask is not None and transparent_mask[source_y * width + source_x]
+            if (channels == 4 and a < 128) or masked:
                 r, g, b = 255, 0, 255  # SDL color key, no SDL_image dependency.
             row.extend((b, g, r))
         row.extend(b"\0" * (row_bytes - len(row)))
@@ -215,6 +257,111 @@ def split_sheet(source: Path, output: Path, prefix: str, rows: int, columns: int
                       (left + x0, row_top + y0, left + x1, row_top + y1))
 
 
+def prepare_boss_assets(source: Path, output: Path) -> None:
+    width, height, channels, pixels = read_png(source)
+    background_mask = remove_flat_background(pixels, channels, width, height)
+
+    def visible(x: int, y: int) -> bool:
+        return (
+            pixel_rgba(pixels, channels, width, x, y)[3] >= 48
+            and not background_mask[y * width + x]
+        )
+
+    row_edges = [row * height // 3 for row in range(4)]
+    column_edges = [column * width // 5 for column in range(6)]
+    names = ("queen", "guardian", "digital")
+    poses = ("walk1", "walk2", "windup", "attack")
+    for row, boss in enumerate(names):
+        y0, y1 = row_edges[row], row_edges[row + 1]
+        boss_points = [
+            (x - column_edges[column], y)
+            for column in range(4)
+            for y in range(y0, y1)
+            for x in range(column_edges[column], column_edges[column + 1])
+            if visible(x, y)
+        ]
+        if not boss_points:
+            raise ValueError(f"Missing {boss} sprites in {source}")
+        aligned_top = max(y0, min(y for _, y in boss_points) - 3)
+        aligned_bottom = min(y1, max(y for _, y in boss_points) + 1)
+        for column, pose in enumerate(poses):
+            x0, x1 = column_edges[column], column_edges[column + 1]
+            scan_x0 = x0 + 20 if column > 0 else x0
+            scan_x1 = min(width, x1 + 80) if column == 3 else x1
+            frame_points = [
+                x for y in range(y0, y1) for x in range(scan_x0, scan_x1)
+                if visible(x, y)
+            ]
+            if not frame_points:
+                raise ValueError(f"Missing {boss} pose {pose} in {source}")
+            frame_left = max(x0, min(frame_points) - 4)
+            frame_right = min(scan_x1, max(frame_points) + 5)
+            write_bmp(
+                output / f"boss_{boss}_{pose}.bmp", width, height, channels, pixels,
+                (frame_left, aligned_top, frame_right, aligned_bottom),
+                transparent_mask=background_mask,
+            )
+
+        projectile_x0, projectile_x1 = column_edges[4], column_edges[5]
+        projectile_name = ("corn", "cob", "popcorn")[row]
+        points = [
+            (x, y)
+            for y in range(y0, y1)
+            for x in range(projectile_x0, projectile_x1)
+            if visible(x, y)
+        ]
+        if not points:
+            raise ValueError(f"Missing {projectile_name} projectile in {source}")
+        crop = (
+            max(projectile_x0, min(x for x, _ in points) - 4),
+            max(y0, min(y for _, y in points) - 4),
+            min(projectile_x1, max(x for x, _ in points) + 5),
+            min(y1, max(y for _, y in points) + 5),
+        )
+        write_bmp(
+            output / f"projectile_{projectile_name}.bmp", width, height, channels, pixels,
+            crop, transparent_mask=background_mask,
+        )
+
+
+def prepare_standalone_sprite(source: Path, output: Path, filename: str, target_size: tuple[int, int]) -> None:
+    width, height, channels, pixels = read_png(source)
+    points = [
+        (x, y)
+        for y in range(height)
+        for x in range(width)
+        if pixel_rgba(pixels, channels, width, x, y)[3] >= 48
+    ]
+    if not points:
+        raise ValueError(f"Missing sprite art in {source}")
+    crop = (
+        max(0, min(x for x, _ in points) - 5),
+        max(0, min(y for _, y in points) - 5),
+        min(width, max(x for x, _ in points) + 6),
+        min(height, max(y for _, y in points) + 6),
+    )
+    write_bmp(output / filename, width, height, channels, pixels, crop, target_size=target_size)
+
+
+def prepare_coffee_bottle(source: Path, output: Path, filename: str = "cafe-garrafa.bmp") -> None:
+    width, height, channels, pixels = read_png(source)
+    points = [
+        (x, y)
+        for y in range(height)
+        for x in range(width)
+        if pixel_rgba(pixels, channels, width, x, y)[3] >= 48
+    ]
+    if not points:
+        raise ValueError(f"Missing coffee bottle art in {source}")
+    crop = (
+        max(0, min(x for x, _ in points) - 4),
+        max(0, min(y for _, y in points) - 4),
+        min(width, max(x for x, _ in points) + 5),
+        min(height, max(y for _, y in points) + 5),
+    )
+    write_bmp(output / filename, width, height, channels, pixels, crop, target_size=(180, 270))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
@@ -240,6 +387,10 @@ def main() -> None:
     ):
         width, height, channels, pixels = read_png(args.source / source_name)
         write_bmp(args.output / output_name, width, height, channels, pixels, target_size=(1280, 720))
+    prepare_boss_assets(args.source / "chefes-remaster-sheet.png", args.output)
+    prepare_coffee_bottle(args.source / "garrafa-cafe.png", args.output)
+    prepare_standalone_sprite(args.source / "coracao-vida.png", args.output, "coracao-vida.bmp", (144, 144))
+    prepare_standalone_sprite(args.source / "tamandua-bebendo.png", args.output, "tamandua-bebendo.bmp", (300, 300))
     print(f"Assets preparados em {args.output}")
 
 
