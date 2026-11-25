@@ -4,13 +4,14 @@ Aventura de plataforma 2D original para Nintendo Switch homebrew. Você controla
 
 ## Aventura
 
-Explore três fases, colete grãos de café e enfrente um chefe no final de cada cenário:
+Explore quatro fases, colete grãos de café e enfrente um chefe no final de cada cenário:
 
 1. **Mata de Poços de Caldas** — floresta, formigas e criaturas da mata; chefe Formiga Rainha.
-2. **Poços de Caldas** — percurso urbano por ruas, praça e telhados; chefe Guardião da Praça.
-3. **Prédio de vidro** — escritório de programação, plataformas elevatórias e bugs digitais; chefe Bug Supremo.
+2. **Mercadão Municipal** — mercado de frutas com claraboia, bancas coloridas e plataformas; chefe Formiga Tanajura.
+3. **Rio de Poços de Caldas** — percurso urbano por ruas, praça, telhados e o trecho de rio; chefe Guardião da Praça.
+4. **Prédio de vidro** — escritório de programação, plataformas elevatórias e bugs digitais; chefe Bug Supremo.
 
-Grãos visíveis e escondidos contam para a aventura e abastecem o turbo, usado para rolar. Marcas no chão indicam onde cavar; corações recuperam vida. Cada chefe precisa receber três pisões e anda pela arena. A cabeça da Formiga Rainha funciona como mola. Na mata, espinhos de roseira cobrem um trecho do chão; no percurso urbano, um rio bloqueia a passagem; no prédio, cabos energizados fecham a rota pelo piso. As plataformas existentes permitem cruzar cada perigo. Os perigos, faíscas, projéteis, itens e plataformas têm animações leves para dar mais movimento às fases. O trecho do rio não tem chão sólido; cair nele reinicia o retorno por solo firme. Os chefes miram projéteis no jogador em baixa frequência: grão de milho na mata, espiga na cidade e pipoca no prédio. Depois de derrotar o chefe, pegue a garrafa-troféu de café para ver fogos e comemorar; a vitória usa um sprite único do tamanduá segurando a garrafa aberta e bebendo. O coração de vida tem arte própria no cenário e no HUD. Os golpes tocam um efeito curto; quando uma criatura é derrotada, aparecem cortes vermelhos e fumaça. A vitória final termina com **“Encontrou um café excelente!”**.
+Grãos visíveis e escondidos contam para a aventura e abastecem o turbo, usado para rolar. Marcas no chão indicam onde cavar; corações recuperam vida. Cada chefe precisa receber três pisões e anda pela arena. A cabeça da Formiga Rainha e da Tanajura funciona como mola. Na mata, uma faixa contínua e densa de roseiras espinhosas cobre o chão; no Rio, a água e os cabos energizados bloqueiam a rota pelo piso; no prédio, cabos energizados ocupam o trecho perigoso. As plataformas existentes permitem cruzar cada perigo. O Mercadão ganhou cenário próprio, com claraboia, luz quente e bancas de frutas. Os perigos, faíscas, projéteis, itens e plataformas têm animações leves para dar mais movimento às fases. O pulo aceita um breve comando antecipado para responder melhor; golpes e derrotas provocam uma vibração visual curta da câmera, sem deslocar o HUD. O trecho do rio não tem chão sólido; cair nele reinicia o retorno por solo firme. Os chefes miram projéteis no jogador em baixa frequência: grão de milho na mata e no Mercadão, espiga no Rio e pipoca no prédio. Depois de derrotar o chefe, pegue a garrafa-troféu de café para ver fogos e comemorar; a vitória usa um sprite único do tamanduá segurando a garrafa aberta e bebendo. O coração de vida tem arte própria no cenário e no HUD. Os golpes tocam um efeito curto; quando uma criatura é derrotada, aparecem cortes vermelhos e fumaça. A vitória final termina com **“Encontrou um café excelente!”**.
 
 O herói começa com cinco vidas. Ao cair ou tocar em um monstro, a animação do anjinho aparece e o herói retorna perto do local, com alguns segundos de proteção. O progresso da fase é preservado. O início de cada fase tem um trecho seguro para aprender os controles.
 
@@ -26,6 +27,24 @@ O herói começa com cinco vidas. Ao cair ou tocar em um monstro, a animação d
 | + | Pausar e consultar o objetivo |
 
 No teclado: setas ou A/D movem; Espaço ou Z pula; X cava; seta para baixo agacha; Shift ou Y rola; Esc pausa.
+
+## Jogar no navegador
+
+O projeto também pode ser compilado para WebAssembly com SDL3. No Git Bash, com o Docker Desktop aberto, gere os arquivos:
+
+~~~bash
+bash tools/build-web.sh
+~~~
+
+A saída local fica em build/web/site/. Para abrir no navegador, sirva essa pasta por HTTP (não abra index.html diretamente):
+
+~~~bash
+python -m http.server 8000 --directory build/web/site
+~~~
+
+Depois acesse http://localhost:8000. Clique em Jogar para iniciar; o clique também habilita o áudio no navegador. Use as teclas indicadas na página ou conecte um controle compatível. Para publicar online, envie o conteúdo completo de build/web/site/ para uma hospedagem estática que sirva os arquivos WebAssembly e .data com os tipos MIME apropriados.
+
+Os artefatos web ficam em build/, que é ignorado pelo Git.
 
 ## Compilar para Nintendo Switch
 

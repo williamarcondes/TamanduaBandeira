@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#061326">
+  <title>Tamanduá-Bandeira — Aventura do Café</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh; margin: 0; padding: clamp(12px, 3vw, 34px);
+      display: grid; place-items: center; color: #f6f2dc;
+      background:
+        radial-gradient(ellipse at 18% 12%, rgba(47, 111, 88, .42), transparent 43%),
+        radial-gradient(ellipse at 88% 84%, rgba(146, 92, 37, .24), transparent 40%),
+        linear-gradient(145deg, #071a28, #061326 62%, #10251e);
+    }
+    .app { width: min(100%, 1240px); }
+    header { display: flex; align-items: center; gap: 14px; margin: 0 0 16px; }
+    .badge {
+      display: grid; place-items: center; flex: 0 0 48px; height: 48px; border-radius: 15px;
+      color: #1c2116; font-size: 24px; font-weight: 900;
+      background: linear-gradient(145deg, #f4d477, #c99842);
+      box-shadow: 0 8px 24px #0006, inset 0 1px 1px #fff9;
+    }
+    h1 { margin: 0; font-size: clamp(18px, 3vw, 25px); letter-spacing: .02em; }
+    .subtitle { margin: 3px 0 0; color: #a9c2b5; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
+    .screen {
+      position: relative; overflow: hidden; border: 1px solid #91c6ad66; border-radius: 17px;
+      background: #08101a; box-shadow: 0 24px 70px #0009, 0 0 0 5px #e8d69c0d;
+    }
+    canvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; outline: none; background: #091d2a; }
+    .overlay {
+      position: absolute; inset: 0; display: grid; place-items: center; padding: 20px;
+      background: linear-gradient(130deg, #071625e8, #0b261fdc);
+      text-align: center; backdrop-filter: blur(5px);
+    }
+    .overlay[hidden] { display: none; }
+    .welcome { max-width: 620px; }
+    .eyebrow { color: #e9c76a; font-weight: 800; font-size: 12px; letter-spacing: .22em; text-transform: uppercase; }
+    .welcome h2 { margin: 12px 0 8px; font-size: clamp(25px, 5vw, 48px); line-height: 1.05; }
+    .welcome p { margin: 8px auto; color: #d1dfd0; line-height: 1.55; }
+    .controls { color: #a9c2b5 !important; font-size: 13px; }
+    button {
+      border: 0; border-radius: 999px; padding: 13px 28px; margin-top: 14px;
+      color: #1d2619; font: inherit; font-weight: 900; letter-spacing: .06em;
+      background: linear-gradient(#ffe99a, #d5a948);
+      box-shadow: 0 5px 0 #8a6328, 0 9px 28px #0007; cursor: pointer;
+    }
+    button:disabled { cursor: progress; filter: grayscale(.5); opacity: .72; }
+    button:focus-visible, .fullscreen:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
+    .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 2px 0; color: #b5c9bc; font-size: 12px; }
+    .fullscreen { border: 1px solid #91c6ad55; border-radius: 999px; padding: 8px 12px; color: #f5e7b1; background: #15302a; cursor: pointer; }
+    #status { color: #e7cb7d; }
+    #error { color: #ff9b8c; white-space: pre-wrap; }
+    @media (max-width: 620px) {
+      body { padding: 10px; }
+      header { margin-bottom: 10px; }
+      .badge { flex-basis: 40px; height: 40px; border-radius: 12px; font-size: 20px; }
+      .bar { align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div class="badge" aria-hidden="true">TB</div>
+      <div>
+        <h1>Tamanduá-Bandeira</h1>
+        <p class="subtitle">Aventura do Café · Edição Brasileira</p>
+      </div>
+    </header>
+    <section class="screen" aria-label="Jogo Tamanduá-Bandeira">
+      <canvas id="canvas" width="1280" height="720" tabindex="0" aria-label="Tela do jogo"></canvas>
+      <div class="overlay" id="overlay">
+        <div class="welcome">
+          <div class="eyebrow">Uma aventura pela Mata de Poços de Caldas</div>
+          <h2>O café da vitória espera por você.</h2>
+          <p>Explore quatro cenários, desvie dos perigos e enfrente os chefes para conquistar a garrafa especial.</p>
+          <p class="controls">Setas ou A/D movem · Espaço ou Z pula · X cava · Shift/Y rola · ↓ agacha<br>Controle conectado também funciona.</p>
+          <p id="status">Preparando o jogo e os recursos…</p>
+          <p id="error" hidden></p>
+          <button id="play" type="button" disabled>CARREGANDO…</button>
+        </div>
+      </div>
+    </section>
+    <div class="bar">
+      <span>O áudio começa após o clique em “Jogar”, conforme as regras do navegador.</span>
+      <button class="fullscreen" id="fullscreen" type="button">Tela cheia</button>
+    </div>
+  </main>
+  <script>
+    var readyToPlay = false;
+    var statusElement = document.getElementById('status');
+    var playButton = document.getElementById('play');
+    var canvasElement = document.getElementById('canvas');
+    var errorElement = document.getElementById('error');
+    var Module = {
+      canvas: canvasElement,
+      noInitialRun: true,
+      setStatus: function(text) {
+        if (text && statusElement) statusElement.textContent = text;
+      },
+      print: function(text) { console.log(text); },
+      printErr: function(text) { console.error(text); },
+      onRuntimeInitialized: function() {
+        readyToPlay = true;
+        statusElement.textContent = 'Pronto. A mata está esperando!';
+        playButton.disabled = false;
+        playButton.textContent = 'JOGAR';
+      },
+      onAbort: function(reason) {
+        errorElement.hidden = false;
+        errorElement.textContent = 'Não foi possível iniciar o jogo: ' + reason;
+        statusElement.textContent = '';
+      }
+    };
+    playButton.addEventListener('click', function() {
+      if (!readyToPlay) return;
+      document.getElementById('overlay').hidden = true;
+      canvasElement.focus();
+      Module.callMain([]);
+    });
+    document.getElementById('fullscreen').addEventListener('click', function() {
+      if (canvasElement.requestFullscreen) canvasElement.requestFullscreen();
+    });
+    window.addEventListener('error', function(event) {
+      if (!readyToPlay && errorElement) {
+        errorElement.hidden = false;
+        errorElement.textContent = event.message || 'Falha ao carregar os arquivos do jogo.';
+      }
+    });
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

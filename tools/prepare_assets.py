@@ -382,6 +382,7 @@ def main() -> None:
                 ["idle", "walk1", "walk2", "bite"])
     for source_name, output_name in (
         ("mata-pocos-de-caldas.png", "mata.bmp"),
+        ("mercadao-municipal.png", "mercadao.bmp"),
         ("cidade-pocos.png", "cidade.bmp"),
         ("escritorio-programacao.png", "escritorio.bmp"),
     ):

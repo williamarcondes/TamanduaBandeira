@@ -15,7 +15,7 @@
 namespace {
 constexpr int screen_w = 1280;
 constexpr int screen_h = 720;
-constexpr int stage_count = 3;
+constexpr int stage_count = 4;
 constexpr int max_lives = 5;
 constexpr int visible_beans_per_stage = 8;
 constexpr int hidden_beans_per_stage = 4;
@@ -105,6 +105,7 @@ struct Player {
     float digging = 0.0F;
     float coffee_boost = 0.0F;
     float coyote_timer = 0.0F;
+    float jump_buffer_timer = 0.0F;
     float respawn_invulnerable = 0.0F;
     int lives = max_lives;
     int beans = 0;
@@ -213,6 +214,21 @@ void draw_texture_rotated(SDL_Renderer* r, const Texture& t, float x, float y, f
     if (!t.texture) return;
     const SDL_FRect dst{x, y, w, h};
     SDL_RenderTextureRotated(r, t.texture, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
+}
+void tanajura_wings(SDL_Renderer* r, float center_x, float top_y, float time) {
+    const float flap=std::sin(time*8.0F)*5.0F;
+    for (int band=0;band<7;++band) {
+        const int distance_from_center=band>3?band-3:3-band;
+        const float span=100.0F-static_cast<float>(distance_from_center)*13.0F;
+        const float y=top_y+static_cast<float>(band)*7.0F+flap*static_cast<float>(band-3)*0.12F;
+        rect(r,center_x-span-9.0F,y,span,7.0F,246,227,167,132);
+        rect(r,center_x+9.0F,y,span,7.0F,246,227,167,132);
+    }
+    color(r,255,244,204,205);
+    SDL_RenderLine(r,center_x-12.0F,top_y+22.0F,center_x-98.0F,top_y+8.0F+flap);
+    SDL_RenderLine(r,center_x-12.0F,top_y+24.0F,center_x-84.0F,top_y+38.0F-flap);
+    SDL_RenderLine(r,center_x+12.0F,top_y+22.0F,center_x+98.0F,top_y+8.0F+flap);
+    SDL_RenderLine(r,center_x+12.0F,top_y+24.0F,center_x+84.0F,top_y+38.0F-flap);
 }
 std::string asset(const char* file) {
 #ifdef __SWITCH__
@@ -348,6 +364,52 @@ void stroke(SDL_Renderer* r, float x0, float y0, float x1, float y1, float width
     for (float offset=-width*.5F; offset<=width*.5F; offset+=1.0F)
         SDL_RenderLine(r,x0+nx*offset,y0+ny*offset,x1+nx*offset,y1+ny*offset);
 }
+void electric_hazard(SDL_Renderer* r, const Hazard& hazard, float camera, float time) {
+    const float left=hazard.x0-camera;
+    const float width=hazard.x1-hazard.x0;
+    const float visible_start=std::max(hazard.x0,camera-20.0F);
+    const float visible_end=std::min(hazard.x1,camera+static_cast<float>(screen_w)+20.0F);
+    rect(r,left,ground_y-13.0F,width,15.0F,24,39,48,238);
+    for (int lane=0;lane<4;++lane) {
+        const float lane_y=ground_y-6.0F-static_cast<float>(lane)*8.0F;
+        for (float hx=hazard.x0+std::floor((visible_start-hazard.x0)/20.0F)*20.0F;
+             hx<visible_end;hx+=20.0F) {
+            const float next=std::min(hx+20.0F,hazard.x1);
+            const float x0=hx-camera;
+            const float x1=next-camera;
+            const float y0=lane_y+std::sin(time*5.5F+hx*.027F+static_cast<float>(lane))*2.6F;
+            const float y1=lane_y+std::sin(time*5.5F+next*.027F+static_cast<float>(lane))*2.6F;
+            const float mid_y=(y0+y1)*0.5F;
+            const float segment_width=x1-x0;
+            rect(r,x0,mid_y-3.0F,segment_width,6.0F,22,56,71,245);
+            rect(r,x0,mid_y-1.0F,segment_width,2.0F,lane%2==0?255:120,lane%2==0?205:236,95,255);
+            color(r,255,244,190,220);
+            SDL_RenderLine(r,x0,y0-1.0F,x1,y1-1.0F);
+        }
+    }
+    const float first_pylon=hazard.x0+12.0F+
+        std::ceil((visible_start-(hazard.x0+12.0F))/76.0F)*76.0F;
+    for (float hx=first_pylon;hx<visible_end;hx+=76.0F) {
+        const float sx=hx-camera;
+        rect(r,sx-5.0F,ground_y-17.0F,10.0F,8.0F,33,47,54,255);
+        rect(r,sx-3.0F,ground_y-16.0F,6.0F,6.0F,251,179,65,255);
+        rect(r,sx-1.0F,ground_y-15.0F,2.0F,4.0F,255,241,172,255);
+    }
+    for (int spark=0;spark<18;++spark) {
+        const float phase=time*8.2F+static_cast<float>(spark)*1.91F;
+        if (std::sin(phase)>0.16F) {
+            const float offset=std::fmod(static_cast<float>(spark)*67.0F+time*24.0F,width);
+            const float sx=left+offset;
+            if (sx < -12.0F || sx > static_cast<float>(screen_w)+12.0F) continue;
+            const float sy=ground_y-13.0F-static_cast<float>(spark%4)*8.0F-std::abs(std::sin(phase))*11.0F;
+            color(r,121,237,255,245);
+            SDL_RenderLine(r,sx-5.0F,sy,sx+5.0F,sy);
+            SDL_RenderLine(r,sx,sy-5.0F,sx,sy+5.0F);
+            color(r,255,255,224,255);
+            SDL_RenderLine(r,sx-3.0F,sy-3.0F,sx+3.0F,sy+3.0F);
+        }
+    }
+}
 void coffee_drink_pose(SDL_Renderer* r, const Texture& sprite,
                        float x, float y, float w, float h, float time) {
     const float bob=std::sin(time*3.0F)*2.0F;
@@ -424,6 +486,9 @@ int main(int, char**) {
 #ifdef __SWITCH__
     if (R_FAILED(romfsInit())) { std::fprintf(stderr, "Falha ao montar RomFS.\n"); return 1; }
 #endif
+#ifdef __EMSCRIPTEN__
+    SDL_SetHint(SDL_HINT_EMSCRIPTEN_ASYNCIFY, "1");
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "SDL: %s\n", SDL_GetError());
 #ifdef __SWITCH__
@@ -431,7 +496,11 @@ int main(int, char**) {
 #endif
         return 1;
     }
+#ifdef __EMSCRIPTEN__
+    SDL_Window* window = SDL_CreateWindow("Tamanduá-Bandeira", screen_w, screen_h, SDL_WINDOW_RESIZABLE);
+#else
     SDL_Window* window = SDL_CreateWindow("Tamandua Bandeira", screen_w, screen_h, SDL_WINDOW_FULLSCREEN);
+#endif
     SDL_Renderer* renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
     if (!window || !renderer) {
         std::fprintf(stderr, "Renderer: %s\n", SDL_GetError());
@@ -493,6 +562,7 @@ int main(int, char**) {
 
     const std::array<Texture, stage_count> backgrounds{{
         load_texture(renderer, asset("mata.bmp"), false, true),
+        load_texture(renderer, asset("mercadao.bmp"), false, true),
         load_texture(renderer, asset("cidade.bmp"), false, true),
         load_texture(renderer, asset("escritorio.bmp"), false, true)
     }};
@@ -507,10 +577,12 @@ int main(int, char**) {
     std::array<std::array<Texture, 4>, stage_count> boss_textures{};
     const std::array<std::array<const char*, 4>, stage_count> boss_texture_names{{
         {{"boss_queen_walk1.bmp", "boss_queen_walk2.bmp", "boss_queen_windup.bmp", "boss_queen_attack.bmp"}},
+        {{"boss_queen_walk1.bmp", "boss_queen_walk2.bmp", "boss_queen_windup.bmp", "boss_queen_attack.bmp"}},
         {{"boss_guardian_walk1.bmp", "boss_guardian_walk2.bmp", "boss_guardian_windup.bmp", "boss_guardian_attack.bmp"}},
         {{"boss_digital_walk1.bmp", "boss_digital_walk2.bmp", "boss_digital_windup.bmp", "boss_digital_attack.bmp"}}
     }};
     const std::array<Texture, stage_count> corn_textures{{
+        load_texture(renderer, asset("projectile_corn.bmp"), true),
         load_texture(renderer, asset("projectile_corn.bmp"), true),
         load_texture(renderer, asset("projectile_cob.bmp"), true),
         load_texture(renderer, asset("projectile_popcorn.bmp"), true)
@@ -527,8 +599,11 @@ int main(int, char**) {
     for (std::size_t i=0; i<gremlin.size(); ++i) gremlin[i]=load_texture(renderer,asset(gremlin_names[i]),true);
     for (std::size_t i=0; i<ants.size(); ++i) ants[i]=load_texture(renderer,asset(ant_names[i]),true);
     for (std::size_t stage=0; stage<boss_textures.size(); ++stage)
-        for (std::size_t pose=0; pose<boss_textures[stage].size(); ++pose)
+        for (std::size_t pose=0; pose<boss_textures[stage].size(); ++pose) {
             boss_textures[stage][pose]=load_texture(renderer,asset(boss_texture_names[stage][pose]),true);
+            if (stage==1 && boss_textures[stage][pose].texture)
+                SDL_SetTextureColorMod(boss_textures[stage][pose].texture,240,157,86);
+        }
 
     int pad_count=0;
     SDL_JoystickID* pad_ids=SDL_GetGamepads(&pad_count);
@@ -536,12 +611,16 @@ int main(int, char**) {
     SDL_free(pad_ids);
 
     const std::array<Ground,4> forest_grounds{{{0,1110},{1200,world_w},{world_w,world_w},{world_w,world_w}}};
+    const std::array<Ground,4> market_grounds{{{0,world_w},{world_w,world_w},{world_w,world_w},{world_w,world_w}}};
     const std::array<Ground,4> city_grounds{{{0,830},{950,1090},{1620,1850},{1970,world_w}}};
     const std::array<Ground,4> office_grounds{{{0,900},{1020,1900},{2020,world_w},{world_w,world_w}}};
-    const std::array<Hazard,stage_count> traversal_hazards{{{1450,1980},{1090,1620},{1135,1645}}};
+    const std::array<Hazard,stage_count> traversal_hazards{{{1450,1980},{0,0},{1090,1620},{1135,1645}}};
+    const Hazard city_wire_hazard{2140.0F,2680.0F};
     std::array<Ground,4> grounds=forest_grounds;
     const std::array<Platform,8> forest_platforms{{{370,510,210},{780,430,205},{1430,510,205},{1800,442,220},
         {2520,500,220},{2870,425,230},{3620,500,205},{4050,510,170}}};
+    const std::array<Platform,8> market_platforms{{{330,525,190},{740,455,185},{1190,520,195},{1590,445,190},
+        {2190,520,200},{2580,450,190},{3230,520,200},{3650,445,200}}};
     const std::array<Platform,8> city_platforms{{{280,530,175},{540,455,190},{1110,520,190},{1410,440,185},
         {2150,525,190},{2450,455,190},{3190,520,200},{3500,445,200}}};
     const std::array<Platform,8> office_platforms{{{250,525,180},{490,455,185},{1160,525,190},{1430,450,190},
@@ -554,11 +633,18 @@ int main(int, char**) {
         {2320,2250,2400,100,1,EnemyKind::Gremlin},{2650,2550,2790,76,2,EnemyKind::Brute},
         {3010,2920,3100,136,1,EnemyKind::Ant},{3480,3390,3570,105,1,EnemyKind::Gremlin},
         {3740,3650,3820,142,1,EnemyKind::Ant}}};
+    const std::array<Enemy,11> market_enemies{{
+        {330,275,400,108,1,EnemyKind::Ant},{625,545,730,94,1,EnemyKind::Gremlin},
+        {760,735,820,126,1,EnemyKind::Ant},{1280,1210,1370,92,1,EnemyKind::Gremlin},
+        {1900,1840,1940,72,2,EnemyKind::Brute},{2300,2220,2380,122,1,EnemyKind::Ant},
+        {2700,2640,2780,101,1,EnemyKind::Gremlin},{3040,2970,3110,132,1,EnemyKind::Ant},
+        {3200,3120,3280,75,2,EnemyKind::Brute},{3500,3430,3590,108,1,EnemyKind::Gremlin},
+        {3860,3770,3950,138,1,EnemyKind::Ant}}};
     const std::array<Enemy,11> city_enemies{{
         {330,275,400,108,1,EnemyKind::Ant},{625,545,730,94,1,EnemyKind::Gremlin},
         {760,735,820,126,1,EnemyKind::Ant},{1750,1665,1820,92,1,EnemyKind::Gremlin},
-        {2020,1980,2110,72,2,EnemyKind::Brute},{2300,2240,2370,122,1,EnemyKind::Ant},
-        {2350,2275,2430,101,1,EnemyKind::Gremlin},{2770,2690,2855,132,1,EnemyKind::Ant},
+        {1900,1840,1940,72,2,EnemyKind::Brute},{2870,2820,2925,122,1,EnemyKind::Ant},
+        {2990,2950,3040,101,1,EnemyKind::Gremlin},{3340,3300,3380,132,1,EnemyKind::Ant},
         {3200,3120,3280,75,2,EnemyKind::Brute},{3500,3430,3590,108,1,EnemyKind::Gremlin},
         {3860,3770,3950,138,1,EnemyKind::Ant}}};
     const std::array<Enemy,11> office_enemies{{
@@ -570,10 +656,12 @@ int main(int, char**) {
         {3830,3750,3950,140,1,EnemyKind::DigitalBug}}};
     std::array<Enemy,11> enemies=forest_enemies;
     const std::array<float,visible_beans_per_stage> forest_bean_x{{180,450,850,1035,1350,2200,2380,3010}};
-    const std::array<float,visible_beans_per_stage> city_bean_x{{180,420,735,2010,1775,1690,2240,3170}};
+    const std::array<float,visible_beans_per_stage> market_bean_x{{180,420,735,1180,1775,2290,2720,3170}};
+    const std::array<float,visible_beans_per_stage> city_bean_x{{180,420,735,2040,1775,1690,2720,3170}};
     const std::array<float,visible_beans_per_stage> office_bean_x{{180,470,790,1050,1810,1880,2240,3200}};
     const std::array<float,hidden_beans_per_stage> forest_cache_x{{690,2250,2530,3500}};
-    const std::array<float,hidden_beans_per_stage> city_cache_x{{690,1800,2500,3510}};
+    const std::array<float,hidden_beans_per_stage> market_cache_x{{690,1800,2520,3510}};
+    const std::array<float,hidden_beans_per_stage> city_cache_x{{690,1800,2020,3510}};
     const std::array<float,hidden_beans_per_stage> office_cache_x{{710,2070,2500,3550}};
     std::array<Cache,4> caches{{{690,8,false},{2250,9,false},{2530,10,false},{3500,11,false}}};
     std::array<Bean,beans_per_stage> beans{{
@@ -595,23 +683,25 @@ int main(int, char**) {
     SDL_Event event{};
     bool running=true, title_screen=true, paused=false, prev_jump=false, prev_dig=false, prev_pause=false;
     float camera=0, elapsed=0;
+    float camera_shake_timer=0.0F, camera_shake_strength=0.0F;
     int current_stage=0;
     float stage_banner_timer=3.2F;
     float calm_start_timer=0.0F;
-    const std::array<const char*,3> stage_names{"MATA DE POCOS","POCOS DE CALDAS","PREDIO DE VIDRO"};
-    const std::array<const char*,3> stage_banners{"FASE 1 - MATA DE POCOS","FASE 2 - POCOS DE CALDAS","FASE 3 - ESCRITORIO DE PROGRAMACAO"};
-    const std::array<const char*,3> stage_objectives{
+    const std::array<const char*,stage_count> stage_names{"MATA DE POCOS","MERCADAO MUNICIPAL","RIO DE POCOS","PREDIO DE VIDRO"};
+    const std::array<const char*,stage_count> stage_banners{"FASE 1 - MATA DE POCOS","FASE 2 - MERCADAO MUNICIPAL","FASE 3 - RIO DE POCOS","FASE 4 - ESCRITORIO DE PROGRAMACAO"};
+    const std::array<const char*,stage_count> stage_objectives{
         "DERROTE A RAINHA E PEGUE A GARRAFA DE CAFE",
+        "DERROTE A TANAJURA E PEGUE A GARRAFA DE CAFE",
         "VENCA O GUARDIAO E PEGUE A GARRAFA DE CAFE",
         "DERROTE O BUG E PEGUE A GARRAFA DE CAFE"
     };
-    const std::array<float,stage_count> heart_positions{{2280.0F,2440.0F,2420.0F}};
+    const std::array<float,stage_count> heart_positions{{2280.0F,1985.0F,1985.0F,2420.0F}};
     const auto reset_stage=[&]() {
-        grounds=current_stage==0?forest_grounds:current_stage==1?city_grounds:office_grounds;
-        platforms=current_stage==0?forest_platforms:current_stage==1?city_platforms:office_platforms;
-        enemies=current_stage==0?forest_enemies:current_stage==1?city_enemies:office_enemies;
-        const auto& bean_x=current_stage==0?forest_bean_x:current_stage==1?city_bean_x:office_bean_x;
-        const auto& cache_x=current_stage==0?forest_cache_x:current_stage==1?city_cache_x:office_cache_x;
+        grounds=current_stage==0?forest_grounds:current_stage==1?market_grounds:current_stage==2?city_grounds:office_grounds;
+        platforms=current_stage==0?forest_platforms:current_stage==1?market_platforms:current_stage==2?city_platforms:office_platforms;
+        enemies=current_stage==0?forest_enemies:current_stage==1?market_enemies:current_stage==2?city_enemies:office_enemies;
+        const auto& bean_x=current_stage==0?forest_bean_x:current_stage==1?market_bean_x:current_stage==2?city_bean_x:office_bean_x;
+        const auto& cache_x=current_stage==0?forest_cache_x:current_stage==1?market_cache_x:current_stage==2?city_cache_x:office_cache_x;
         for (std::size_t i=0;i<platforms.size();++i) {
             platforms[i].base_y=platforms[i].y;
             platforms[i].previous_y=platforms[i].y;
@@ -625,14 +715,14 @@ int main(int, char**) {
         platforms[spring_index].spring=true;
         player.x=72.0F; player.y=ground_y-114.0F; player.vx=0.0F; player.vy=0.0F;
         player.coffee_boost=0.0F;
-        player.coyote_timer=0.0F; player.respawn_invulnerable=0.0F;
+        player.coyote_timer=0.0F; player.jump_buffer_timer=0.0F; player.respawn_invulnerable=0.0F;
         player.grounded=true; player.crouched=false; player.rolling=false; player.jump_attack_armed=false; player.digging=0.0F;
         angel.active=false;
         bottle_collected=false; celebrating=false; celebration_timer=0.0F;
         boss.x=world_w-430.0F;
         boss.min_x=world_w-1580.0F;
         boss.max_x=world_w-300.0F;
-        boss.speed=65.0F+static_cast<float>(current_stage)*12.0F;
+        boss.speed=46.0F+static_cast<float>(current_stage)*6.0F;
         boss.direction=-1.0F;
         boss.parts=3; boss.hit_lock=0.0F; boss.flash=0.0F;
         boss.attack_timer=3.0F; boss.attack_animation=0.0F; corn_projectiles.clear();
@@ -663,19 +753,23 @@ int main(int, char**) {
     reset_stage();
     const auto respawn_near_death=[&]() {
         const Hazard& hazard=traversal_hazards[static_cast<std::size_t>(current_stage)];
+        const std::array<Hazard,2> safe_zones{{hazard,city_wire_hazard}};
+        const std::size_t safe_zone_count=current_stage==2?2U:1U;
         float best_score=1.0e9F;
         float safe_x=72.0F;
         for (const auto& ground:grounds) {
             const float min_x=ground.x0+8.0F;
             const float max_x=ground.x1-66.0F;
             if (max_x<min_x || ground.x1-ground.x0<80.0F) continue;
-            const std::array<float,3> candidates{{
-                std::clamp(angel.respawn_x,min_x,max_x),
-                std::clamp(hazard.x0-76.0F,min_x,max_x),
-                std::clamp(hazard.x1+10.0F,min_x,max_x)
-            }};
+            std::array<float,5> candidates{{std::clamp(angel.respawn_x,min_x,max_x),
+                std::clamp(hazard.x0-76.0F,min_x,max_x),std::clamp(hazard.x1+10.0F,min_x,max_x),
+                std::clamp(city_wire_hazard.x0-76.0F,min_x,max_x),
+                std::clamp(city_wire_hazard.x1+10.0F,min_x,max_x)}};
             for (float candidate:candidates) {
-                if (candidate+58.0F>hazard.x0 && candidate+2.0F<hazard.x1) continue;
+                bool unsafe=false;
+                for (std::size_t i=0;i<safe_zone_count;++i)
+                    unsafe=unsafe || (candidate+58.0F>safe_zones[i].x0 && candidate+2.0F<safe_zones[i].x1);
+                if (unsafe) continue;
                 float score=std::abs(candidate-angel.respawn_x);
                 for (const auto& foe:enemies) if (foe.alive &&
                     std::abs(candidate+30.0F-(foe.x+27.0F))<105.0F) score+=420.0F;
@@ -688,10 +782,11 @@ int main(int, char**) {
         player.y=ground_y-114.0F;
         player.vx=0.0F; player.vy=0.0F;
         player.grounded=true; player.crouched=false; player.rolling=false;
-        player.coyote_timer=0.18F; player.respawn_invulnerable=2.8F;
+        player.coyote_timer=0.18F; player.jump_buffer_timer=0.0F; player.respawn_invulnerable=2.8F;
     };
     const auto start_death=[&]() {
         if (angel.active || game_over || player.finished) return;
+        camera_shake_timer=0.22F; camera_shake_strength=7.0F;
         if (player.lives>0) --player.lives;
         angel.active=true;
         angel.x=player.x+30.0F;
@@ -700,6 +795,7 @@ int main(int, char**) {
         angel.respawn_x=player.x; angel.respawn_y=player.y;
         player.vx=0.0F; player.vy=0.0F; player.digging=0.0F;
         player.coffee_boost=0.0F; player.rolling=false; player.crouched=false; player.jump_attack_armed=false;
+        player.jump_buffer_timer=0.0F;
     };
     Uint64 previous=SDL_GetTicks();
 
@@ -724,6 +820,7 @@ int main(int, char**) {
         if (!paused && !title_screen) stage_banner_timer=std::max(0.0F,stage_banner_timer-dt);
         if (!paused && !title_screen && !angel.active)
             player.respawn_invulnerable=std::max(0.0F,player.respawn_invulnerable-dt);
+        if (!paused && !title_screen) camera_shake_timer=std::max(0.0F,camera_shake_timer-dt);
         if (!paused && !title_screen && calm_start_timer>0.0F) {
             calm_start_timer=std::max(0.0F,calm_start_timer-dt);
             if (calm_start_timer==0.0F) {
@@ -755,13 +852,13 @@ int main(int, char**) {
             bean_sprite(renderer,840,337);
             bean_sprite(renderer,1000,301);
             panel(renderer,552,218,422,89);
-            text(renderer,"MATA  -  PRACA  -  ESCRITORIO",582,244,2,240,247,224);
+            text(renderer,"MATA  -  MERCADAO  -  RIO  -  PREDIO",530,244,2,240,247,224);
             panel(renderer,552,322,422,89);
             text(renderer,"CAFE, PLATAFORMAS E BUGS",579,348,2,240,247,224);
             panel(renderer,295,406,690,111);
             text(renderer,"UMA TRILHA DE GRAOS LEVA O TAMANDUA",317,416,2,255,224,151);
-            text(renderer,"DA MATA A CIDADE. NO PREDIO DE VIDRO",317,443,2,247,243,221);
-            text(renderer,"TRES CHEFES GUARDAM O CAFE EXCELENTE!",317,470,2,247,243,221);
+            text(renderer,"DA MATA AO MERCADAO, AO RIO E AO PREDIO",317,443,2,247,243,221);
+            text(renderer,"QUATRO CHEFES GUARDAM O CAFE EXCELENTE!",317,470,2,247,243,221);
             panel(renderer,408,523,464,55);
             text(renderer,"B COMECAR",521,538,3,255,223,138);
             text(renderer,"B PULAR   A CAVAR   Y ROLAR COM TURBO",326,588,2,250,248,232);
@@ -812,6 +909,8 @@ int main(int, char**) {
             }
             const bool jump_pressed=c.jump && !prev_jump;
             const bool dig_pressed=c.dig && !prev_dig;
+            if (jump_pressed) player.jump_buffer_timer=0.15F;
+            else player.jump_buffer_timer=std::max(0.0F,player.jump_buffer_timer-dt);
             if (player.grounded) player.coyote_timer=0.18F;
             else player.coyote_timer=std::max(0.0F,player.coyote_timer-dt);
             const float old_h=player.crouched?62.0F:player.rolling?74.0F:114.0F;
@@ -831,10 +930,11 @@ int main(int, char**) {
             if (player.rolling) player.vx=static_cast<float>(player.facing)*510.0F;
             else if (player.crouched) player.vx=c.horizontal*80.0F;
             else player.vx=c.horizontal*265.0F;
-            if (jump_pressed && (player.grounded || player.coyote_timer>0.0F) && !player.rolling) {
+            if (player.jump_buffer_timer>0.0F && (player.grounded || player.coyote_timer>0.0F) && !player.rolling) {
                 player.vy=-840.0F;
                 player.grounded=false;
                 player.coyote_timer=0.0F;
+                player.jump_buffer_timer=0.0F;
                 player.jump_attack_armed=true;
             }
             if (dig_pressed && player.grounded && !player.rolling) {
@@ -860,7 +960,7 @@ int main(int, char**) {
             player.grounded=false;
             const float new_bottom=player.y+h;
             const Hazard& hazard=traversal_hazards[static_cast<std::size_t>(current_stage)];
-            const bool over_river=current_stage==1 && player.x+50.0F>hazard.x0 && player.x+10.0F<hazard.x1;
+            const bool over_river=current_stage==2 && player.x+50.0F>hazard.x0 && player.x+10.0F<hazard.x1;
             bool boss_top_contact=false;
             if (player.vy>=0) {
                 for (const auto& ground:grounds) if (!over_river && player.x+50>ground.x0 && player.x+10<ground.x1 &&
@@ -891,8 +991,14 @@ int main(int, char**) {
             if (player.y>screen_h+80) {
                 start_death();
             }
-            if (current_stage!=1 && player.respawn_invulnerable<=0.0F && player.grounded &&
-                player.y+h>=ground_y-2.0F && player.x+58.0F>hazard.x0 && player.x+2.0F<hazard.x1)
+            const bool on_ground_hazard=player.grounded && player.y+h>=ground_y-2.0F;
+            const bool on_thorns=current_stage==0 && on_ground_hazard &&
+                player.x+58.0F>hazard.x0 && player.x+2.0F<hazard.x1;
+            const bool on_city_wires=current_stage==2 && on_ground_hazard &&
+                player.x+58.0F>city_wire_hazard.x0 && player.x+2.0F<city_wire_hazard.x1;
+            const bool on_office_wires=current_stage==3 && on_ground_hazard &&
+                player.x+58.0F>hazard.x0 && player.x+2.0F<hazard.x1;
+            if (player.respawn_invulnerable<=0.0F && (on_thorns || on_city_wires || on_office_wires))
                 start_death();
 
             if (!angel.active) {
@@ -923,11 +1029,9 @@ int main(int, char**) {
                     const float boss_center=boss.x+125.0F;
                     const float player_center=player.x+30.0F;
                     const float distance=player_center-boss_center;
-                    if (std::abs(distance)>72.0F) boss.direction=distance>0.0F?1.0F:-1.0F;
-                    else boss.direction=std::sin(elapsed*0.8F)>=0.0F?1.0F:-1.0F;
-                    boss.x+=boss.direction*boss.speed*dt;
-                    if (boss.x<boss.min_x) { boss.x=boss.min_x; boss.direction=1.0F; }
-                    if (boss.x>boss.max_x) { boss.x=boss.max_x; boss.direction=-1.0F; }
+                    boss.direction=distance>=0.0F?1.0F:-1.0F;
+                    if (std::abs(distance)>172.0F) boss.x+=boss.direction*boss.speed*dt;
+                    boss.x=std::clamp(boss.x,boss.min_x,boss.max_x);
                     boss.attack_timer-=dt;
                     boss.attack_animation=std::max(0.0F,boss.attack_animation-dt);
                     if (boss.attack_timer<=0.0F) {
@@ -979,6 +1083,7 @@ int main(int, char**) {
                             if (defeated) foe.alive=false;
                             hit_effects.push_back({foe.x+ew*.5F,ey+eh*.48F,0.0F,defeated});
                             play_impact();
+                            camera_shake_timer=0.12F; camera_shake_strength=3.0F;
                             if (stomp) player.jump_attack_armed=false;
                             player.vy=stomp?-510.0F:-360.0F; player.grounded=false;
                             if (stomp) break;
@@ -997,8 +1102,9 @@ int main(int, char**) {
                         --boss.parts; boss.hit_lock=0.45F; boss.flash=0.24F;
                         hit_effects.push_back({boss.x+140.0F,boss_top+boss_h*.48F,0.0F,boss.parts<=0});
                         play_impact();
-                        player.jump_attack_armed=current_stage==0;
-                        if(current_stage==0) { player.vy=-840.0F; player.grounded=false; }
+                        camera_shake_timer=0.16F; camera_shake_strength=5.0F;
+                        player.jump_attack_armed=current_stage==0 || current_stage==1;
+                        if(current_stage==0 || current_stage==1) { player.vy=-840.0F; player.grounded=false; }
                         if (boss.parts<=0) boss.defeated=true;
                     } else if (!boss_top_contact &&
                                player.respawn_invulnerable<=0.0F &&
@@ -1018,6 +1124,11 @@ int main(int, char**) {
         prev_jump=c.jump; prev_dig=c.dig;
 
         camera=std::clamp(player.x-static_cast<float>(screen_w)*0.38F,0.0F,world_w-screen_w);
+        if (camera_shake_timer>0.0F) {
+            const float fade=std::clamp(camera_shake_timer/0.22F,0.0F,1.0F);
+            camera+=std::sin(elapsed*67.0F)*camera_shake_strength*fade;
+            camera=std::clamp(camera,0.0F,world_w-screen_w);
+        }
         color(renderer,11,29,49); SDL_RenderClear(renderer);
         const Texture& background=backgrounds[static_cast<std::size_t>(current_stage)];
         if (background.texture) {
@@ -1027,9 +1138,9 @@ int main(int, char**) {
             draw_texture(renderer,background,-bg_offset,0,bg_w,bg_h);
         } else rect(renderer,0,0,screen_w,screen_h,44,105,153);
 
-        const std::array<std::array<Uint8,3>,3> soil{{{{87,51,31}},{{121,76,49}},{{47,63,78}}}};
-        const std::array<std::array<Uint8,3>,3> surface{{{{70,142,69}},{{166,124,67}},{{91,155,170}}}};
-        const std::array<std::array<Uint8,3>,3> highlight{{{{119,183,78}},{{217,173,97}},{{157,211,218}}}};
+        const std::array<std::array<Uint8,3>,4> soil{{{{87,51,31}},{{104,62,44}},{{121,76,49}},{{47,63,78}}}};
+        const std::array<std::array<Uint8,3>,4> surface{{{{70,142,69}},{{185,112,61}},{{166,124,67}},{{91,155,170}}}};
+        const std::array<std::array<Uint8,3>,4> highlight{{{{119,183,78}},{{238,168,82}},{{217,173,97}},{{157,211,218}}}};
         const std::size_t stage_color=static_cast<std::size_t>(current_stage);
         for (const auto& ground:grounds) {
             rect(renderer,ground.x0-camera,ground_y,ground.x1-ground.x0,98,soil[stage_color][0],soil[stage_color][1],soil[stage_color][2]);
@@ -1039,25 +1150,39 @@ int main(int, char**) {
         const Hazard& hazard=traversal_hazards[static_cast<std::size_t>(current_stage)];
         const float hazard_left=hazard.x0-camera, hazard_width=hazard.x1-hazard.x0;
         if (current_stage==0) {
-            rect(renderer,hazard_left,ground_y-6.0F,hazard_width,7,67,126,54);
-            for (float hx=hazard.x0;hx<hazard.x1;hx+=26.0F) {
+            rect(renderer,hazard_left,ground_y-11.0F,hazard_width,14.0F,48,91,43,255);
+            rect(renderer,hazard_left,ground_y-4.0F,hazard_width,5.0F,84,139,55,255);
+            const float thorn_start=hazard.x0+std::floor((std::max(hazard.x0,camera-16.0F)-hazard.x0)/15.0F)*15.0F;
+            const float thorn_end=std::min(hazard.x1,camera+static_cast<float>(screen_w)+16.0F);
+            for (float hx=thorn_start;hx<thorn_end;hx+=15.0F) {
                 const float sx=hx-camera;
-                const float sway=std::sin(elapsed*2.0F+hx*.018F)*2.0F;
-                stroke(renderer,sx+10.0F,ground_y-2.0F,sx+5.0F,ground_y-27.0F+sway,4.0F,76,131,58);
-                stroke(renderer,sx+10.0F,ground_y-9.0F,sx+20.0F,ground_y-30.0F-sway,4.0F,91,151,62);
-                rect(renderer,sx+8.0F,ground_y-20.0F+sway,5.0F,7.0F,115,69,51);
-                rect(renderer,sx+2.0F,ground_y-30.0F+sway,7.0F,5.0F,185,49,70);
+                const float wave=std::sin(elapsed*2.8F+hx*.021F)*2.3F;
+                const float height=30.0F+std::fmod(hx*0.37F,15.0F);
+                color(renderer,34,83,43);
+                SDL_RenderLine(renderer,sx+7.0F,ground_y-7.0F,sx+2.0F,ground_y-height+wave);
+                SDL_RenderLine(renderer,sx+8.0F,ground_y-7.0F,sx+14.0F,ground_y-height+5.0F-wave);
+                color(renderer,114,169,64);
+                SDL_RenderLine(renderer,sx+7.0F,ground_y-7.0F,sx+3.0F,ground_y-height+wave);
+                SDL_RenderLine(renderer,sx+8.0F,ground_y-7.0F,sx+13.0F,ground_y-height+5.0F-wave);
+                color(renderer,157,184,69);
+                SDL_RenderLine(renderer,sx+7.0F,ground_y-8.0F,sx+3.0F,ground_y-15.0F+wave);
+                SDL_RenderLine(renderer,sx+8.0F,ground_y-8.0F,sx+13.0F,ground_y-16.0F-wave);
             }
-            for (float hx=hazard.x0+24.0F;hx<hazard.x1;hx+=112.0F) {
-                const float sx=hx-camera+std::sin(elapsed*2.0F+hx*.01F)*2.0F;
-                rect(renderer,sx-10.0F,ground_y-36.0F,10,9,173,43,67);
-                rect(renderer,sx-4.0F,ground_y-41.0F,12,11,219,65,83);
-                rect(renderer,sx+6.0F,ground_y-35.0F,10,9,173,43,67);
-                rect(renderer,sx-1.0F,ground_y-33.0F,8,8,255,166,130);
-                rect(renderer,sx+1.0F,ground_y-32.0F,4,5,255,218,164);
+            const float first_rose=hazard.x0+30.0F+
+                std::ceil((std::max(hazard.x0,camera-16.0F)-(hazard.x0+30.0F))/76.0F)*76.0F;
+            for (float hx=first_rose;hx<std::min(hazard.x1,camera+static_cast<float>(screen_w)+16.0F);hx+=76.0F) {
+                const float sx=hx-camera+std::sin(elapsed*2.2F+hx*.014F)*2.0F;
+                rect(renderer,sx-11.0F,ground_y-40.0F,10.0F,11.0F,163,39,60,255);
+                rect(renderer,sx-5.0F,ground_y-48.0F,13.0F,15.0F,225,59,75,255);
+                rect(renderer,sx+7.0F,ground_y-40.0F,10.0F,11.0F,163,39,60,255);
+                rect(renderer,sx-1.0F,ground_y-43.0F,8.0F,12.0F,255,147,105,255);
+                rect(renderer,sx+1.0F,ground_y-40.0F,4.0F,7.0F,255,225,165,255);
+                rect(renderer,sx-3.0F,ground_y-31.0F,6.0F,5.0F,66,119,49,255);
             }
-        } else if (current_stage==1) {
-            for (float hx=hazard.x0;hx<hazard.x1;hx+=12.0F) {
+        } else if (current_stage==2) {
+            const float water_start=hazard.x0+std::floor((std::max(hazard.x0,camera-16.0F)-hazard.x0)/12.0F)*12.0F;
+            const float water_end=std::min(hazard.x1,camera+static_cast<float>(screen_w)+16.0F);
+            for (float hx=water_start;hx<water_end;hx+=12.0F) {
                 const float fraction=(hx-hazard.x0)/hazard_width;
                 const float edge=std::clamp(std::min(fraction*11.0F,(1.0F-fraction)*11.0F),0.0F,1.0F);
                 const float sx=hx-camera;
@@ -1076,29 +1201,9 @@ int main(int, char**) {
                 const float bx=hazard_left+std::fmod(static_cast<float>(bubble)*113.0F+elapsed*17.0F,hazard_width-16.0F);
                 rect(renderer,bx,ground_y+86.0F-phase,4.0F,4.0F,151,231,224,130);
             }
-        } else {
-            for (float hx=hazard.x0;hx<hazard.x1;hx+=14.0F) {
-                const float x0=hx-camera;
-                const float y0=ground_y-3.0F+std::sin(elapsed*5.0F+hx*.024F)*2.5F;
-                const float x1=hx+14.0F-camera;
-                const float y1=ground_y-3.0F+std::sin(elapsed*5.0F+(hx+14.0F)*.024F)*2.5F;
-                stroke(renderer,x0,y0,x1,y1,5.0F,36,69,85);
-                stroke(renderer,x0,y0,x1,y1,2.0F,255,202,80);
-            }
-            for (float hx=hazard.x0+24.0F;hx<hazard.x1;hx+=108.0F) {
-                const float sx=hx-camera;
-                rect(renderer,sx,ground_y-9.0F,8.0F,8.0F,94,125,137);
-                rect(renderer,sx+2.0F,ground_y-7.0F,4.0F,4.0F,255,209,91);
-            }
-            for (int spark=0;spark<6;++spark) {
-                const float phase=elapsed*8.0F+static_cast<float>(spark)*1.7F;
-                if (std::sin(phase)>0.55F) {
-                    const float sx=hazard_left+std::fmod(static_cast<float>(spark)*83.0F+elapsed*35.0F,hazard_width);
-                    const float sy=ground_y-15.0F-std::abs(std::sin(phase))*8.0F;
-                    stroke(renderer,sx-4.0F,sy,sx+4.0F,sy,2.0F,152,250,255);
-                    stroke(renderer,sx,sy-4.0F,sx,sy+4.0F,2.0F,152,250,255);
-                }
-            }
+            electric_hazard(renderer,city_wire_hazard,camera,elapsed);
+        } else if (current_stage==3) {
+            electric_hazard(renderer,hazard,camera,elapsed);
         }
         for (const auto& p:platforms) if (p.travel>0.0F) {
             const float rail_x=p.x-camera;
@@ -1127,6 +1232,11 @@ int main(int, char**) {
                     rect(renderer,tuft+23,p.y+24,10,4,111,66,41);
                 }
             } else if (current_stage==1) {
+                for (float tile=x+24;tile<x+p.w-16;tile+=42) {
+                    rect(renderer,tile,p.y+17,3,16,143,87,51,190);
+                    rect(renderer,tile+5,p.y+20,23,3,236,176,93,180);
+                }
+            } else if (current_stage==2) {
                 for (float tile=x+25;tile<x+p.w-16;tile+=46) {
                     rect(renderer,tile,p.y+17,2,16,211,165,101,190);
                     rect(renderer,tile+4,p.y+20,24,3,218,176,115,170);
@@ -1156,7 +1266,6 @@ int main(int, char**) {
         for (const auto& cache:caches) dig_mark(renderer,cache.x-camera,ground_y,cache.dug,current_stage);
         if (!heart.found) {
             const float pulse=std::sin(elapsed*4.0F)*3.0F;
-            rect(renderer,heart.x-camera-5.0F,heart.y-4.0F,39.0F,37.0F,255,92,103,static_cast<Uint8>(45+std::abs(pulse)*8));
             heart_sprite(renderer,life_heart_texture,heart.x-camera-5.0F,heart.y-6.0F+pulse,40.0F);
         }
         if (boss.defeated && !bottle_collected) {
@@ -1232,9 +1341,10 @@ int main(int, char**) {
             const float target_w=boss_texture.h>0?target_h*static_cast<float>(boss_texture.w)/static_cast<float>(boss_texture.h):220.0F;
             const float spring_bob=current_stage==0?queen_spring_offset(elapsed)*0.35F:0.0F;
             const float sprite_x=boss.x-camera+140.0F-target_w*0.5F;
+            if (current_stage==1) tanajura_wings(renderer,boss.x-camera+140.0F,ground_y-target_h+34.0F,elapsed);
             draw_texture(renderer,boss_texture,sprite_x,ground_y-target_h-spring_bob,target_w,target_h,player.x<boss.x+125.0F);
             const float head_top=boss_top_y(current_stage,ground_y,elapsed);
-            text(renderer,current_stage==0?"FORMIGA RAINHA":current_stage==1?"GUARDIAO DA PRACA":"BUG SUPREMO",
+            text(renderer,current_stage==0?"FORMIGA RAINHA":current_stage==1?"FORMIGA TANAJURA":current_stage==2?"GUARDIAO DA PRACA":"BUG SUPREMO",
                  static_cast<int>(boss.x-camera+28.0F),static_cast<int>(head_top-22.0F),1,255,244,210);
             for (int part=0;part<3;++part)
                 rect(renderer,boss.x-camera+63.0F+static_cast<float>(part)*21.0F,head_top-10.0F,16,7,
@@ -1320,7 +1430,7 @@ int main(int, char**) {
                 const float happy_bob=std::sin(elapsed*4.0F)*4.0F;
                 coffee_drink_pose(renderer,victory_sprite,230,238+happy_bob,250,250,elapsed);
                 text(renderer,"TAMANDUA VENCEU",493,207,3,255,244,210);
-                text(renderer,"3 FASES CONCLUIDAS",493,257,2,186,222,170);
+                text(renderer,"4 FASES CONCLUIDAS",493,257,2,186,222,170);
                 text(renderer,"GRAOS: "+std::to_string(player.beans)+"/"+std::to_string(total_beans),493,300,3,255,218,126);
                 text(renderer,"ENCONTROU UM CAFE EXCELENTE!",493,362,2,239,199,111);
                 text(renderer,"B RECOMECAR",529,485,2,255,223,138);
